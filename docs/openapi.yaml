@@ -404,7 +404,7 @@ components:
               code: chat_not_found
               message: Chat not found
     FileTooLarge:
-      description: Размер больше MAX_UPLOAD_BYTES.
+      description: Размер больше MAX_UPLOAD_BYTES (по умолчанию 500 МиБ, 524288000 байт).
       content:
         application/json:
           schema:
