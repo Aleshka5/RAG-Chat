@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #efe6d8;
+  --color-sheet: #f7f3eb;
+  --color-ink: #1c1714;
+  --color-muted: #6e655c;
+  --color-line: #e0d5c6;
+  --color-pine: #1e4d3a;
+  --color-pine-ink: #16392b;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+h1,
+h2,
+.serif {
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote {
+  margin: 0.45rem 0;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.25rem;
+}
+
+.markdown ul {
+  list-style: disc;
+}
+
+.markdown ol {
+  list-style: decimal;
+}
+
+.markdown code {
+  font-family: "IBM Plex Mono", "ui-monospace", monospace;
+  font-size: 0.92em;
+  background: rgb(28 23 20 / 6%);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.25rem;
+}
+
+.markdown pre {
+  overflow-x: auto;
+  background: #241f1b;
+  color: #f6f1e8;
+  border-radius: 0.6rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.markdown a {
+  color: var(--color-pine);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button,
+a,
+input,
+textarea {
+  outline-color: var(--color-pine);
+}
