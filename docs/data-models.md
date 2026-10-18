@@ -152,7 +152,7 @@ db.messages.createIndex({ user_id: 1, created_at: -1 })
 client.create_collection(
     collection_name="documents",
     vectors_config=models.VectorParams(
-        size=384,
+        size=1024,
         distance=models.Distance.COSINE,
     ),
     hnsw_config=models.HnswConfigDiff(

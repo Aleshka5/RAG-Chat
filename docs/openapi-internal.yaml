@@ -96,7 +96,7 @@ components:
         format: uuid
   responses:
     ValidationError:
-      description: Тело запроса отклонено. Текст длиннее 128 токенов не обрезается.
+      description: Тело запроса отклонено. Текст длиннее EMBEDDING_MAX_TOKENS не обрезается.
       content:
         application/json:
           schema:
@@ -141,15 +141,19 @@ components:
           minimum: 0
     EmbedRequest:
       type: object
-      required: [texts]
+      required: [texts, input_type]
       properties:
         texts:
           type: array
           minItems: 1
-          maxItems: 32
+          maxItems: 8
           items:
             type: string
             minLength: 1
+        input_type:
+          type: string
+          enum: [document, query]
+          description: document без префикса, query с инструкцией Instruct/Query.
         model:
           type: string
           description: Если передано, обязано совпасть с EMBEDDING_MODEL.
@@ -161,8 +165,8 @@ components:
           type: array
           items:
             type: array
-            minItems: 384
-            maxItems: 384
+            minItems: 1024
+            maxItems: 1024
             items:
               type: number
               format: float
@@ -170,4 +174,4 @@ components:
           type: string
         dimension:
           type: integer
-          example: 384
+          example: 1024

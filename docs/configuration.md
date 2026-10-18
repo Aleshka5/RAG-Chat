@@ -33,21 +33,22 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `PROCESSOR_CONCURRENCY` | `1` | Число каналов с `prefetch=1`. |
-| `CHUNK_TOKENS` | `120` | Не поднимать выше 120 при текущей модели. |
-| `CHUNK_OVERLAP_TOKENS` | `12` | Меньше `CHUNK_TOKENS`. |
+| `CHUNK_TOKENS` | `256` | Не выше `EMBEDDING_MAX_TOKENS`. На CPU не поднимать к лимиту модели в 32K. |
+| `CHUNK_OVERLAP_TOKENS` | `26` | Меньше `CHUNK_TOKENS`, около 10%. |
 | `MIN_EXTRACTED_CHARS` | `50` | Страница короче или равна порогу идёт в OCR. |
 | `OCR_RENDER_DPI` | `300` | |
 | `OCR_TIMEOUT` | `30` | Секунды на один запрос страницы. |
 | `OCR_MAX_ATTEMPTS` | `3` | |
-| `EMBEDDING_TIMEOUT` | `10` | Секунды на одну пачку. |
-| `EMBEDDING_BATCH_SIZE` | `32` | Совпадает с лимитом Embedding. |
-| `EMBEDDING_DIM` | `384` | |
+| `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
+| `EMBEDDING_BATCH_SIZE` | `8` | Совпадает с лимитом Embedding. |
+| `EMBEDDING_DIM` | `1024` | |
+| `EMBEDDING_MAX_TOKENS` | `1024` | Тот же потолок, что у сервиса Embedding. |
 | `QDRANT_UPSERT_BATCH` | `64` | |
 | `STALE_PROCESSING_SECONDS` | `900` | После этого DELETE может забрать `processing`. |
 | `SWEEP_INTERVAL_SECONDS` | `60` | |
 | `UPLOAD_REQUEUE_AFTER_SECONDS` | `120` | Возраст записи `error=enqueue_failed`, после которого sweeper публикует сообщение. |
 
-`CHUNK_TOKENS + 2` не должен превышать 128. Старт обязан это проверить.
+`CHUNK_TOKENS` не больше `EMBEDDING_MAX_TOKENS`, перекрытие меньше окна. Иначе процесс не стартует.
 
 ## Deletion Worker
 
@@ -72,7 +73,9 @@
 | `RAG_MIN_SCORE` | `0` | `0` выключает отсечение. |
 | `RAG_CONTEXT_MESSAGES` | `10` | Сколько прошлых сообщений попадает в промпт. |
 | `EMBEDDING_TIMEOUT` | `10` | |
-| `EMBEDDING_DIM` | `384` | Длина вектора вопроса. Иная длина — ошибка запроса, не поиск. |
+| `EMBEDDING_DIM` | `1024` | Длина вектора вопроса. Иная длина — ошибка запроса, не поиск. |
+| `EMBEDDING_MAX_TOKENS` | `1024` | Потолок вопроса вместе с инструкцией. |
+| `EMBEDDING_QUERY_TASK` | `Given a user question, retrieve relevant passages from the user's documents` | Та же строка, что у Embedding. Chat считает по ней токены и обрезает вопрос. Префикс к модели добавляет Embedding. |
 
 ## OCR
 
@@ -87,10 +90,12 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `EMBEDDING_PORT` | `8091` | |
-| `EMBEDDING_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | |
-| `EMBEDDING_DIM` | `384` | |
-| `EMBEDDING_BATCH_SIZE` | `32` | Верхняя граница `texts`. |
-| `EMBEDDING_TIMEOUT` | `10` | |
+| `EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | |
+| `EMBEDDING_DIM` | `1024` | Полная размерность, без усечения Matryoshka. |
+| `EMBEDDING_MAX_TOKENS` | `1024` | После добавления инструкции запроса. Модель умеет 32768, сервис более длинные тексты отклоняет. |
+| `EMBEDDING_QUERY_TASK` | `Given a user question, retrieve relevant passages from the user's documents` | |
+| `EMBEDDING_BATCH_SIZE` | `8` | Верхняя граница `texts` на CPU. |
+| `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
 
 ## Gateway
 
