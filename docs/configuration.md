@@ -90,7 +90,10 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `EMBEDDING_PORT` | `8091` | |
-| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Текстовый контур, без энкодеров изображения и звука. |
+| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Имя в ответе `/embed`. Энкодеры изображения и звука не загружаются. |
+| `EMBEDDING_GGUF` | `embeddinggemma-2-Q8_0.gguf` | Текстовый файл из `ggml-org/embeddinggemma-2-GGUF`. Не F16 и не `mmproj`. |
+| `EMBEDDING_LLAMA_URL` | `http://127.0.0.1:8092` | llama-server внутри контейнера. В `rag_internal` этот порт не публикуется. |
+| `EMBEDDING_CONTEXT` | `2048` | Одинаковые `--ctx-size`, `--batch-size` и `--ubatch-size`. |
 | `EMBEDDING_DIM` | `768` | Полная размерность. Усечение Matryoshka в MVP не используется. |
 | `EMBEDDING_MAX_TOKENS` | `1024` | После префикса запроса или документа. Контекст модели — 8192. |
 | `EMBEDDING_BATCH_SIZE` | `16` | Верхняя граница `texts` на CPU. |

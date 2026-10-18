@@ -13,7 +13,9 @@
 | `embedding` | 8091 | внутренний HTTP |
 | `frontend` | 3000 | статический UI |
 
-Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
+Код всех этих образов лежит в одном репозитории. Стенд запускается Podman: `podman compose`, манифест `deploy/compose.yaml`, вход через `make up`. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
+
+Контейнер `embedding` внутри себя запускает `llama-server` на `127.0.0.1:8092` и FastAPI на 8091. В compose это один сервис, не два.
 
 Инфраструктура локального стенда: MinIO, MongoDB 7, Qdrant ≥ 1.11, RabbitMQ 3 с management-плагином.
 
