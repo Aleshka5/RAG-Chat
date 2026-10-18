@@ -1,0 +1,118 @@
+# Local stand from docs/deployment.md.
+# Build contexts are relative to the repository root, matching that example.
+# Host ports are not published. OCR and embedding stay on rag_internal.
+# The example AMQP URL uses host "rabbit"; the service name is rabbitmq, so
+# the broker also answers to that alias.
+
+networks:
+  rag_internal:
+    name: rag_internal
+  rag_edge:
+    name: rag_edge
+
+services:
+  rag-edge:
+    build: ./services/rag-edge
+    networks: [rag_internal, rag_edge]
+    environment:
+      RAG_EDGE_PORT: "8080"
+      MAX_UPLOAD_BYTES: "524288000"
+      FILE_COLLECTOR_URL: http://file-collector:8081
+      CHAT_URL: http://chat:8082
+      FRONTEND_URL: http://frontend:3000
+
+  file-collector:
+    build: ./services/file-collector
+    networks: [rag_internal]
+    environment:
+      FILE_COLLECTOR_PORT: "8081"
+      MAX_UPLOAD_BYTES: "524288000"
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: documents
+      MONGODB_URI: mongodb://mongo:27017/rag
+      RABBITMQ_URL: amqp://rabbit:5672/
+
+  processor:
+    build: ./services/processor
+    networks: [rag_internal]
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      MONGODB_URI: mongodb://mongo:27017/rag
+      QDRANT_URL: http://qdrant:6333
+      OCR_URL: http://ocr:8090
+      EMBEDDING_URL: http://embedding:8091
+      RABBITMQ_URL: amqp://rabbit:5672/
+      PROCESSOR_CONCURRENCY: "1"
+
+  deletion-worker:
+    build: ./services/deletion-worker
+    networks: [rag_internal]
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      MONGODB_URI: mongodb://mongo:27017/rag
+      QDRANT_URL: http://qdrant:6333
+      RABBITMQ_URL: amqp://rabbit:5672/
+      DELETION_CONCURRENCY: "1"
+
+  chat:
+    build: ./services/chat
+    networks: [rag_internal]
+    environment:
+      CHAT_PORT: "8082"
+      MONGODB_URI: mongodb://mongo:27017/rag
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDING_URL: http://embedding:8091
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+
+  ocr:
+    build: ./services/ocr
+    networks: [rag_internal]
+
+  embedding:
+    build: ./services/embedding
+    networks: [rag_internal]
+
+  frontend:
+    build: ./frontend
+    networks: [rag_internal]
+
+  minio:
+    image: minio/minio
+    networks: [rag_internal]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes: ["minio-data:/data"]
+
+  mongo:
+    image: mongo:7
+    networks: [rag_internal]
+    volumes: ["mongo-data:/data/db"]
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    networks: [rag_internal]
+    volumes: ["qdrant-data:/qdrant/storage"]
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    networks:
+      rag_internal:
+        aliases:
+          - rabbit
+    volumes: ["rabbit-data:/var/lib/rabbitmq"]
+
+volumes:
+  minio-data:
+  mongo-data:
+  qdrant-data:
+  rabbit-data:
