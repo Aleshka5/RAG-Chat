@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: RAG Chat Internal API
+  version: 1.0.0
+  description: |
+    OCR и Embedding. Вызываются только из сети приложения.
+    Поведение описано в `docs/internal-services.md`.
+servers:
+  - url: http://ocr:8090
+    description: OCR
+  - url: http://embedding:8091
+    description: Embedding
+tags:
+  - name: OCR
+  - name: Embedding
+  - name: Health
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Процесс жив и модель загружена
+      responses:
+        "200":
+          description: Модель уже в памяти.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /ocr:
+    post:
+      tags: [OCR]
+      summary: Распознать одну страницу
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Разбор завершён. Пустой text допустим.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "504":
+          description: Бюджет OCR_TIMEOUT исчерпан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /embed:
+    post:
+      tags: [Embedding]
+      summary: Посчитать векторы пачки текстов
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedRequest"
+      responses:
+        "200":
+          description: Векторы в том же порядке, что и texts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "504":
+          description: Бюджет EMBEDDING_TIMEOUT исчерпан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+  responses:
+    ValidationError:
+      description: Тело запроса отклонено. Текст длиннее 128 токенов не обрезается.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: validation_error
+              message: Invalid request
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    OcrResult:
+      type: object
+      required: [text, confidence, processing_time_ms]
+      properties:
+        text:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        processing_time_ms:
+          type: integer
+          minimum: 0
+    EmbedRequest:
+      type: object
+      required: [texts]
+      properties:
+        texts:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+        model:
+          type: string
+          description: Если передано, обязано совпасть с EMBEDDING_MODEL.
+    EmbedResult:
+      type: object
+      required: [embeddings, model, dimension]
+      properties:
+        embeddings:
+          type: array
+          items:
+            type: array
+            minItems: 384
+            maxItems: 384
+            items:
+              type: number
+              format: float
+        model:
+          type: string
+        dimension:
+          type: integer
+          example: 384

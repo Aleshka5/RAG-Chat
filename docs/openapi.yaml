@@ -1,0 +1,597 @@
+openapi: 3.0.3
+info:
+  title: RAG Chat Public API
+  version: 1.0.0
+  description: |
+    Публичный контракт File Collector (`/api/files`) и Chat (`/api/chats`).
+    Поведение, не выражаемое схемой, описано в `docs/api.md`.
+    Пользователя задаёт существующий gateway заголовком `X-User-Id`.
+servers:
+  - url: /
+    description: За существующим gateway
+tags:
+  - name: Files
+  - name: Chats
+  - name: Health
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Процесс жив
+      security: []
+      responses:
+        "200":
+          description: Процесс отвечает. Зависимости не проверяются.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /api/files:
+    get:
+      tags: [Files]
+      summary: Список файлов пользователя
+      parameters:
+        - $ref: "#/components/parameters/Limit50"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Файлы без статуса deleted, новые сначала.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Files]
+      summary: Загрузить PDF
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: Файл сохранён и поставлен в обработку.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Такой файл уже есть у пользователя.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: duplicate_file
+                  message: A file with the same content already exists
+                  details:
+                    file_id: 6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMedia"
+        "500":
+          description: Файл записан, но публикация в очередь не удалась.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+  /api/files/{file_id}:
+    parameters:
+      - $ref: "#/components/parameters/FileId"
+    get:
+      tags: [Files]
+      summary: Карточка файла
+      responses:
+        "200":
+          description: Метаданные файла.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/FileNotFound"
+    delete:
+      tags: [Files]
+      summary: Поставить файл на удаление
+      responses:
+        "202":
+          description: Удаление поставлено в очередь.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/FileNotFound"
+        "409":
+          description: Файл ещё обрабатывается или удаление уже идёт.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: file_busy
+                  message: File cannot be deleted in its current state
+        "500":
+          description: Статус deleting записан, публикация не подтвердилась.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/files/{file_id}/content:
+    parameters:
+      - $ref: "#/components/parameters/FileId"
+    get:
+      tags: [Files]
+      summary: Байты PDF
+      responses:
+        "200":
+          description: Содержимое файла. Страницу выбирает клиент.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: inline, с filename и filename*
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/FileNotFound"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+  /api/chats:
+    get:
+      tags: [Chats]
+      summary: Список чатов
+      parameters:
+        - $ref: "#/components/parameters/Limit50"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Чаты пользователя, недавно обновлённые сначала.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Chats]
+      summary: Создать чат
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChat"
+      responses:
+        "201":
+          description: Пустой чат создан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chat"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/chats/{chat_id}:
+    parameters:
+      - $ref: "#/components/parameters/ChatId"
+    get:
+      tags: [Chats]
+      summary: Чат с сообщениями
+      parameters:
+        - $ref: "#/components/parameters/Limit200"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Сообщения по возрастанию времени.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatDetails"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ChatNotFound"
+    delete:
+      tags: [Chats]
+      summary: Удалить чат и сообщения
+      responses:
+        "204":
+          description: Чат удалён.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ChatNotFound"
+  /api/chats/{chat_id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/ChatId"
+    post:
+      tags: [Chats]
+      summary: Задать вопрос и получить поток ответа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessage"
+      responses:
+        "200":
+          description: |
+            Поток SSE. События разделены пустой строкой.
+            Порядок: `meta`, ноль или больше `delta`, затем ровно одно из `done` или `error`.
+
+            ```
+            event: meta
+            data: {"chat_id":"...","user_message_id":"...","assistant_message_id":"...","sources":[]}
+
+            event: delta
+            data: {"content":"текст"}
+
+            event: done
+            data: {"finish_reason":"stop"}
+            ```
+
+            `sources` в `meta` совпадает с тем, что будет сохранено у ответа.
+            Ошибка до начала потока возвращается JSON-телом и кодом 4xx/5xx, а не событием.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ChatNotFound"
+        "502":
+          description: Embedding или LLM отвергли запрос до начала потока.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+        "504":
+          description: Таймаут LLM до начала потока.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    UserId:
+      type: apiKey
+      in: header
+      name: X-User-Id
+      description: UUID пользователя, который подставил gateway.
+  parameters:
+    FileId:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChatId:
+      name: chat_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Limit50:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Limit200:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    Unauthorized:
+      description: Нет X-User-Id или это не UUID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unauthenticated
+              message: Missing or invalid X-User-Id
+    ValidationError:
+      description: Тело или query не прошли проверку.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: validation_error
+              message: Invalid request
+              details:
+                fields: [content]
+    FileNotFound:
+      description: Файл не найден, удалён или принадлежит другому пользователю.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: file_not_found
+              message: File not found
+    ChatNotFound:
+      description: Чат не найден или принадлежит другому пользователю.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: chat_not_found
+              message: Chat not found
+    FileTooLarge:
+      description: Размер больше MAX_UPLOAD_BYTES.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: file_too_large
+              message: File exceeds the size limit
+    UnsupportedMedia:
+      description: Содержимое не начинается с сигнатуры PDF.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unsupported_media_type
+              message: Only PDF is accepted
+    DependencyUnavailable:
+      description: MongoDB, MinIO, Qdrant или Embedding недоступны.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: dependency_unavailable
+              message: Dependency unavailable
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    File:
+      type: object
+      required:
+        - file_id
+        - file_name
+        - file_size
+        - status
+        - page_count
+        - error
+        - created_at
+        - updated_at
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        file_size:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [uploaded, processing, ready, error, deleting]
+        page_count:
+          type: integer
+          minimum: 0
+          nullable: true
+        error:
+          type: string
+          nullable: true
+          enum:
+            - corrupt_pdf
+            - storage_read_failed
+            - embedding_failed
+            - index_write_failed
+            - metadata_update_failed
+            - no_extractable_text
+            - enqueue_failed
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    FileList:
+      type: object
+      required: [items, limit, offset, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/File"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+          minimum: 0
+    DeleteAccepted:
+      type: object
+      required: [file_id, status]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [deleting]
+    CreateChat:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+    Chat:
+      type: object
+      required: [chat_id, title, created_at, updated_at]
+      properties:
+        chat_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ChatList:
+      type: object
+      required: [items, limit, offset, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Chat"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+          minimum: 0
+    Source:
+      type: object
+      required: [file_id, file_name, page_number, chunk_index, snippet, score]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        page_number:
+          type: integer
+          minimum: 1
+        chunk_index:
+          type: integer
+          minimum: 0
+        snippet:
+          type: string
+          maxLength: 500
+        score:
+          type: number
+    Message:
+      type: object
+      required: [message_id, role, content, created_at]
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Source"
+        created_at:
+          type: string
+          format: date-time
+    ChatDetails:
+      allOf:
+        - $ref: "#/components/schemas/Chat"
+        - type: object
+          required: [messages, limit, offset, total_messages]
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/Message"
+            limit:
+              type: integer
+            offset:
+              type: integer
+            total_messages:
+              type: integer
+              minimum: 0
+    CreateMessage:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4000
+security:
+  - UserId: []
