@@ -70,5 +70,5 @@ def test_title_snippet_and_token_budget():
     question = "я" * 5000
     trimmed = truncate_query(question, 1024)
     assert len(trimmed) < len(question)
-    assert estimate_tokens(QUERY_PREFIX) + estimate_tokens(trimmed) <= 1024
+    assert estimate_tokens(QUERY_PREFIX + trimmed) <= 1024
     assert NOT_FOUND == "Не найдено в документах."

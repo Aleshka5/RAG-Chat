@@ -13,7 +13,7 @@
 | `embedding` | 8091 | внутренний HTTP |
 | `frontend` | 3000 | статический UI |
 
-Код всех этих образов лежит в одном репозитории. Стенд запускается Podman: `podman compose`, манифест `deploy/compose.yaml`, вход через `make up`. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
+Код всех этих образов лежит в одном репозитории. Стенд запускается Podman: `podman compose -f docker-compose.yml` из корня репозитория, вход через `make up`. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
 
 Контейнер `embedding` внутри себя запускает `llama-server` на `127.0.0.1:8092` и FastAPI на 8091. В compose это один сервис, не два.
 
@@ -35,7 +35,7 @@
 
 ## Локальный compose
 
-Ниже состав стенда, а не готовый манифест релиза. Секреты подставляются снаружи. У MinIO текущих образов задаются `MINIO_ROOT_USER` и `MINIO_ROOT_PASSWORD`, команда `server /data --console-address ":9001"`.
+Ниже состав стенда, тот же, что в корневом `docker-compose.yml`. Это не второй манифест: `make up` и `podman compose -f docker-compose.yml` читают тот файл. Секреты подставляются снаружи. У MinIO текущих образов задаются `MINIO_ROOT_USER` и `MINIO_ROOT_PASSWORD`, команда `server /data --console-address ":9001"`.
 
 Порты на хост не публикуются. Имена сетей заданы явно, чтобы Auth Gateway мог подключиться к `rag_edge` как к external, не завися от имени проекта compose. `rag-edge` входит в обе сети: с `rag_edge` его видит gateway, по `rag_internal` он ходит к File Collector, Chat и frontend. Остальные контейнеры только в `rag_internal`.
 
