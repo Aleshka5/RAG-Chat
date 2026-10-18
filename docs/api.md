@@ -38,7 +38,7 @@
 | 404 | `chat_not_found` | Нет чата или он чужой. |
 | 409 | `duplicate_file` | Тот же SHA-256 уже есть у пользователя не в статусе `deleted`. В `details.file_id` — существующий id. |
 | 409 | `file_busy` | Удаление во время свежего `processing` или повторное удаление при `deleting`. |
-| 413 | `file_too_large` | Размер больше `MAX_UPLOAD_BYTES`. |
+| 413 | `file_too_large` | Размер больше `MAX_UPLOAD_BYTES`. По умолчанию 500 МиБ. |
 | 415 | `unsupported_media_type` | Не PDF. |
 | 500 | `enqueue_failed` | Метаданные записаны, публикация в очередь не удалась. |
 | 502 | `upstream_failed` | LLM или Embedding ответили ошибкой после повтора. Для потока — событие `error`, если ответ уже начат. |

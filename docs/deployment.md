@@ -52,6 +52,7 @@ services:
     networks: [rag_internal, rag_edge]
     environment:
       RAG_EDGE_PORT: "8080"
+      MAX_UPLOAD_BYTES: "524288000"
       FILE_COLLECTOR_URL: http://file-collector:8081
       CHAT_URL: http://chat:8082
       FRONTEND_URL: http://frontend:3000
@@ -61,6 +62,7 @@ services:
     networks: [rag_internal]
     environment:
       FILE_COLLECTOR_PORT: "8081"
+      MAX_UPLOAD_BYTES: "524288000"
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}

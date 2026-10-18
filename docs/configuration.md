@@ -26,7 +26,7 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `FILE_COLLECTOR_PORT` | `8081` | |
-| `MAX_UPLOAD_BYTES` | `52428800` | 50 МиБ. |
+| `MAX_UPLOAD_BYTES` | `524288000` | 500 МиБ. Больше этого File Collector отвечает `413` и в MinIO не пишет. |
 
 ## Processor
 
@@ -103,6 +103,7 @@
 | Переменная | Кто | По умолчанию | Смысл |
 |------------|-----|--------------|--------|
 | `RAG_EDGE_PORT` | rag-edge | `8080` | Слушает в `rag_internal` и `rag_edge`, на хост не публикуется. |
+| `MAX_UPLOAD_BYTES` | rag-edge | `524288000` | То же значение, что у File Collector. Свой меньший предел тела edge не задаёт. |
 | `FILE_COLLECTOR_URL` | rag-edge | `http://file-collector:8081` | Куда уходят `/api/files` и `/api/files/*`. |
 | `CHAT_URL` | rag-edge | `http://chat:8082` | Куда уходят `/api/chats` и `/api/chats/*`. |
 | `FRONTEND_URL` | rag-edge | `http://frontend:3000` | Куда уходит остальной путь, включая `GET /`. |
