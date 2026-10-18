@@ -1,0 +1,45 @@
+[project]
+name = "file-collector"
+version = "1.0.0"
+description = "File Collector HTTP service: PDF upload, metadata, and deletion enqueue."
+requires-python = ">=3.12"
+dependencies = [
+  "aio-pika>=9.5.4",
+  "fastapi>=0.115.6",
+  "minio>=7.2.15",
+  "motor>=3.7.0",
+  "python-multipart>=0.0.18",
+  "uvicorn[standard]>=0.34.0",
+]
+
+[project.scripts]
+file-collector = "file_collector.main:main"
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28.0",
+  "pytest>=8.3.4",
+  "ruff>=0.9.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["file_collector"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["file_collector", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
