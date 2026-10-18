@@ -33,15 +33,16 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `PROCESSOR_CONCURRENCY` | `1` | Число каналов с `prefetch=1`. |
-| `CHUNK_TOKENS` | `256` | Не выше `EMBEDDING_MAX_TOKENS`. На CPU не поднимать к лимиту модели в 32K. |
-| `CHUNK_OVERLAP_TOKENS` | `26` | Меньше `CHUNK_TOKENS`, около 10%. |
+| `CHUNK_TOKENS` | `512` | Не выше `EMBEDDING_MAX_TOKENS` и не выше локального окна модели (1024). |
+| `CHUNK_OVERLAP_TOKENS` | `51` | Меньше `CHUNK_TOKENS`, около 10%. |
+| `MAX_PROCESS_ATTEMPTS` | `8` | Сколько доставок одного сообщения можно начать, не дойдя до `ready`. |
 | `MIN_EXTRACTED_CHARS` | `50` | Страница короче или равна порогу идёт в OCR. |
 | `OCR_RENDER_DPI` | `300` | |
 | `OCR_TIMEOUT` | `30` | Секунды на один запрос страницы. |
 | `OCR_MAX_ATTEMPTS` | `3` | |
 | `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
-| `EMBEDDING_BATCH_SIZE` | `8` | Совпадает с лимитом Embedding. |
-| `EMBEDDING_DIM` | `1024` | |
+| `EMBEDDING_BATCH_SIZE` | `16` | Совпадает с лимитом Embedding. |
+| `EMBEDDING_DIM` | `768` | |
 | `EMBEDDING_MAX_TOKENS` | `1024` | Тот же потолок, что у сервиса Embedding. |
 | `QDRANT_UPSERT_BATCH` | `64` | |
 | `STALE_PROCESSING_SECONDS` | `900` | После этого DELETE может забрать `processing`. |
@@ -73,9 +74,8 @@
 | `RAG_MIN_SCORE` | `0` | `0` выключает отсечение. |
 | `RAG_CONTEXT_MESSAGES` | `10` | Сколько прошлых сообщений попадает в промпт. |
 | `EMBEDDING_TIMEOUT` | `10` | |
-| `EMBEDDING_DIM` | `1024` | Длина вектора вопроса. Иная длина — ошибка запроса, не поиск. |
-| `EMBEDDING_MAX_TOKENS` | `1024` | Потолок вопроса вместе с инструкцией. |
-| `EMBEDDING_QUERY_TASK` | `Given a user question, retrieve relevant passages from the user's documents` | Та же строка, что у Embedding. Chat считает по ней токены и обрезает вопрос. Префикс к модели добавляет Embedding. |
+| `EMBEDDING_DIM` | `768` | Длина вектора вопроса. Иная длина — ошибка запроса, не поиск. |
+| `EMBEDDING_MAX_TOKENS` | `1024` | Потолок вопроса вместе с префиксом. |
 
 ## OCR
 
@@ -90,11 +90,10 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `EMBEDDING_PORT` | `8091` | |
-| `EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | |
-| `EMBEDDING_DIM` | `1024` | Полная размерность, без усечения Matryoshka. |
-| `EMBEDDING_MAX_TOKENS` | `1024` | После добавления инструкции запроса. Модель умеет 32768, сервис более длинные тексты отклоняет. |
-| `EMBEDDING_QUERY_TASK` | `Given a user question, retrieve relevant passages from the user's documents` | |
-| `EMBEDDING_BATCH_SIZE` | `8` | Верхняя граница `texts` на CPU. |
+| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Текстовый контур, без энкодеров изображения и звука. |
+| `EMBEDDING_DIM` | `768` | Полная размерность. Усечение Matryoshka в MVP не используется. |
+| `EMBEDDING_MAX_TOKENS` | `1024` | После префикса запроса или документа. Контекст модели — 8192. |
+| `EMBEDDING_BATCH_SIZE` | `16` | Верхняя граница `texts` на CPU. |
 | `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
 
 ## Gateway

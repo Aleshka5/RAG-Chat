@@ -64,6 +64,7 @@ stateDiagram-v2
 | `metadata_update_failed` | Финальное обновление MongoDB не выполнено. |
 | `no_extractable_text` | После извлечения и OCR не осталось ни одного чанка. |
 | `enqueue_failed` | Публикация `doc.process` не подтвердилась. Повторно публикует только sweeper Processor. |
+| `processing_attempts_exceeded` | Восемь доставок `doc.process` не довели файл до `ready`. |
 
 `safe_name`: взять базовое имя, оставить буквы Unicode, цифры и `._-`, остальные символы заменить на `_`, схлопнуть повторы `_`, обрезать до 200 символов, пустой результат заменить на `document.pdf`, расширение привести к `.pdf`.
 
@@ -86,7 +87,56 @@ db.files.createIndex(
 
 Частичный индекс разрешает заново загрузить тот же файл после `deleted`. Гонка двух одинаковых загрузок заканчивается ошибкой дубликата ключа у второй вставки; API отвечает `409 duplicate_file`.
 
-В ответах API нет `s3_key`, `safe_name`, `content_sha256` и `user_id`.
+В ответах API нет `s3_key`, `safe_name`, `content_sha256`, `user_id` и сырого `checkpoint`. Пока статус `processing`, в ответе есть `progress`, собранный из контрольной точки. В остальных статусах `progress` равен `null`.
+
+```json
+{
+  "pages_done": 120,
+  "pages_total": 400,
+  "chunks_done": 30,
+  "chunks_total": 80
+}
+```
+
+`pages_total` известен после открытия PDF, до этого `null`. `chunks_total` известен после нарезки, до этого `null`.
+
+### Контрольная точка на `files`
+
+Внутренний объект `checkpoint`:
+
+| Поле | Тип | Правило |
+|------|-----|---------|
+| `pages_done` | int | Сколько страниц уже есть в `file_pages`, с начала и без дыр. |
+| `pages_total` | int или null | Число страниц PDF. |
+| `chunks_done` | int | Сколько чанков уже записано в Qdrant. |
+| `chunks_total` | int или null | Сколько чанков в текущей нарезке. |
+| `process_attempts` | int | Сколько раз брали текущую публикацию сообщения. Новая публикация ставит 1. |
+| `embedding_model` | string | Модель, под которую посчитаны чанки. |
+| `chunk_tokens` | int | Окно, под которое посчитаны чанки. |
+| `chunk_overlap` | int | Перекрытие той нарезки. |
+
+Несовпадение модели или параметров нарезки с текущим процессом сбрасывает только векторную часть: точки файла удаляются, `chunks_done=0`, `chunks_total=null`. Страницы в `file_pages` остаются.
+
+## Коллекция `file_pages`
+
+Текст одной страницы. Отдельный документ на страницу, чтобы не упираться в лимит 16 МиБ у документа файла.
+
+| Поле | Тип | Правило |
+|------|-----|---------|
+| `file_id` | string | |
+| `user_id` | string | |
+| `page_number` | int | С 1. |
+| `text` | string | Пустая строка, если `origin=empty`. |
+| `origin` | string | `text`, `ocr` или `empty`. |
+| `updated_at` | datetime | |
+
+Индекс, создают Processor и Deletion Worker:
+
+```javascript
+db.file_pages.createIndex({ file_id: 1, page_number: 1 }, { unique: true })
+```
+
+Записи живут до удаления файла. Поиск по ним не делается. В API коллекции нет.
 
 ## Коллекция `chats`
 
@@ -152,7 +202,7 @@ db.messages.createIndex({ user_id: 1, created_at: -1 })
 client.create_collection(
     collection_name="documents",
     vectors_config=models.VectorParams(
-        size=1024,
+        size=768,
         distance=models.Distance.COSINE,
     ),
     hnsw_config=models.HnswConfigDiff(

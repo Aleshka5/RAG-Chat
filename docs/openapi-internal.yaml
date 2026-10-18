@@ -146,14 +146,17 @@ components:
         texts:
           type: array
           minItems: 1
-          maxItems: 8
+          maxItems: 16
           items:
             type: string
             minLength: 1
         input_type:
           type: string
           enum: [document, query]
-          description: document без префикса, query с инструкцией Instruct/Query.
+          description: document получает префикс title/text, query — префикс question answering.
+        title:
+          type: string
+          description: Имя файла. Обязательно для document и запрещено для query.
         model:
           type: string
           description: Если передано, обязано совпасть с EMBEDDING_MODEL.
@@ -165,8 +168,8 @@ components:
           type: array
           items:
             type: array
-            minItems: 1024
-            maxItems: 1024
+            minItems: 768
+            maxItems: 768
             items:
               type: number
               format: float
@@ -174,4 +177,4 @@ components:
           type: string
         dimension:
           type: integer
-          example: 1024
+          example: 768

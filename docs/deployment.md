@@ -22,6 +22,7 @@ Gateway в compose нет: он уже развёрнут снаружи. Для
 |--------|-----|
 | Бакет MinIO | File Collector |
 | Индексы `files` | File Collector, Processor, Deletion Worker |
+| Индекс `file_pages` | Processor, Deletion Worker |
 | Индексы `chats` и `messages` | Chat |
 | Коллекция Qdrant и payload-индексы | Processor |
 | Топология RabbitMQ | File Collector, Processor, Deletion Worker |

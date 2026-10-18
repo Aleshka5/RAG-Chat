@@ -432,6 +432,7 @@ components:
         - status
         - page_count
         - error
+        - progress
         - created_at
         - updated_at
       properties:
@@ -461,12 +462,35 @@ components:
             - metadata_update_failed
             - no_extractable_text
             - enqueue_failed
+            - processing_attempts_exceeded
+        progress:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/FileProgress"
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+    FileProgress:
+      type: object
+      required: [pages_done, pages_total, chunks_done, chunks_total]
+      properties:
+        pages_done:
+          type: integer
+          minimum: 0
+        pages_total:
+          type: integer
+          minimum: 0
+          nullable: true
+        chunks_done:
+          type: integer
+          minimum: 0
+        chunks_total:
+          type: integer
+          minimum: 0
+          nullable: true
     FileList:
       type: object
       required: [items, limit, offset, total]
