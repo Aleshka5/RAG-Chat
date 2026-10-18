@@ -1,6 +1,6 @@
 # Внутренние сервисы
 
-Форма HTTP — [openapi-internal.yaml](openapi-internal.yaml). Сервисы доступны только в сети приложения. Заголовка `X-User-Id` у них нет.
+Форма HTTP — [openapi-internal.yaml](openapi-internal.yaml). Сервисы доступны только в сети `rag_internal`. Заголовков личности у них нет.
 
 Оба принимают необязательный `X-Request-Id` и возвращают его. Оба отдают `GET /health` → `{"status":"ok"}`.
 

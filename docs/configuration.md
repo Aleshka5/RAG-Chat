@@ -96,14 +96,13 @@
 | `EMBEDDING_BATCH_SIZE` | `16` | Верхняя граница `texts` на CPU. |
 | `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
 
-## Gateway
+## Край и Auth Gateway
 
-Своих переменных в этом репозитории нет. Существующий gateway направляет:
+Переменных Auth Gateway в этом репозитории нет. Хост, сети и заголовки — в [gateway.md](gateway.md).
 
-| Внешний путь | Куда |
-|--------------|------|
-| `/api/files` | File Collector |
-| `/api/chats` | Chat |
-| остальной UI | Frontend |
-
-Он же выставляет `X-User-Id` и не пропускает запрос к этим префиксам без установленного пользователя.
+| Переменная | Кто | По умолчанию | Смысл |
+|------------|-----|--------------|--------|
+| `RAG_EDGE_PORT` | rag-edge | `8080` | Слушает в `rag_internal` и `rag_edge`, на хост не публикуется. |
+| `FILE_COLLECTOR_URL` | rag-edge | `http://file-collector:8081` | Куда уходят `/api/files` и `/api/files/*`. |
+| `CHAT_URL` | rag-edge | `http://chat:8082` | Куда уходят `/api/chats` и `/api/chats/*`. |
+| `FRONTEND_URL` | rag-edge | `http://frontend:3000` | Куда уходит остальной путь, включая `GET /`. |

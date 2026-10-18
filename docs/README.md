@@ -14,7 +14,7 @@
 
 | Компонент | Почему вне репозитория |
 |-----------|------------------------|
-| Gateway | Уже существует. Аутентифицирует пользователя и передаёт `X-User-Id`. Свой gateway не разрабатывается. |
+| Auth Gateway | Уже существует. Проверяет access JWT и передаёт `X-Auth-User-Id`. Свой auth gateway не разрабатывается. Контракт — [gateway.md](gateway.md). |
 | LLM | Внешний OpenAI-совместимый endpoint (`LLM_BASE_URL`). |
 | MinIO, MongoDB, Qdrant, RabbitMQ | Инфраструктура. Сервисы её инициализируют при старте, но не реализуют. |
 
@@ -23,6 +23,7 @@
 | Документ | О чём |
 |----------|--------|
 | [review.md](review.md) | Разбор черновика и принятые исправления. Информационный, не нормативный. |
+| [gateway.md](gateway.md) | Сети и заголовки Auth Gateway. |
 | [architecture.md](architecture.md) | Компоненты, границы, потоки. |
 | [data-models.md](data-models.md) | MongoDB, Qdrant, статусы, идентификаторы. |
 | [api.md](api.md) | Поведение публичного HTTP API. |

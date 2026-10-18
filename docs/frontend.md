@@ -1,8 +1,10 @@
 # Контракт клиента
 
-Клиент ходит только в gateway. В локальном стенде без gateway он сам ставит `X-User-Id` (UUID) на запросы к File Collector и Chat. Заголовок задаётся в одном месте HTTP-клиента, а не в каждом экране.
+Клиент открывает `https://rag.filenkov.store`. Запросы same-origin, cookie `auth_access` уходит сама, если хост покрыт `COOKIE_DOMAIN`. Клиент не ставит `X-Auth-*`, `X-User-Id` и `Authorization`. Эти заголовки пишет Auth Gateway на пути к `rag-edge`.
 
-Рекомендуемый стек MVP, не норма формы API: React, Vite, Tailwind CSS, Zustand, PDF.js. Прокси Vite в разработке направляет `/api/files` на порт 8081 и `/api/chats` на порт 8082, чтобы браузер не упирался в междоменные правила. Сервисы API сами CORS не настраивают.
+Ответ `401` с телом gateway `{"error":"unauthorized"}` значит, что сеанса нет. Клиент уводит браузер на `{PUBLIC_ORIGIN}/auth?return_to=` с текущим URL. Конверт RAG `error.code` в этом ответе не разбирается. `403` с `{"error":"blocked"}` или с кодом RAG `forbidden` показывает, что доступ закрыт, и не повторяет запрос.
+
+Рекомендуемый стек MVP, не норма формы API: React, Vite, Tailwind CSS, Zustand, PDF.js. Сервисы API сами CORS не настраивают: браузер ходит на тот же хост. Локальная проверка без Auth Gateway бьёт во внутренние порты с заголовком `X-Auth-User-Id` и не является формой продакшена.
 
 ## Файлы, маршрут `/files`
 
@@ -59,6 +61,6 @@
 
 Маршрут клиента: `/files/{file_id}?page={page_number}`.
 
-PDF.js загружает `GET /api/files/{file_id}/content` с тем же `X-User-Id` и открывает страницу `page`. Номер страницы в API не передаётся: фрагмент `#page=` на URL хранилища не используется.
+PDF.js загружает `GET /api/files/{file_id}/content` тем же same-origin запросом, что и остальной API, и открывает страницу `page`. Заголовок личности клиент к этому URL не приписывает. Номер страницы в API не передаётся. Ответ API не вставляется в iframe: Auth Gateway ставит `X-Frame-Options: DENY`.
 
 `page` меньше 1 заменяется на 1. Если страниц меньше запрошенной, viewer остаётся на последней и не шлёт повторный запрос к API.

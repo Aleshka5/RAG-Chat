@@ -2,14 +2,14 @@
 
 Нормативная форма путей, полей и кодов — [openapi.yaml](openapi.yaml). Здесь — правила, которые по схеме не видны.
 
-Два публичных сервиса:
+Два прикладных сервиса за `rag-edge`. Снаружи их закрывает Auth Gateway, контракт — [gateway.md](gateway.md).
 
-| Сервис | Префикс за gateway |
-|--------|--------------------|
+| Сервис | Префикс |
+|--------|---------|
 | File Collector | `/api/files` |
 | Chat | `/api/chats` |
 
-Оба читают пользователя только из заголовка `X-User-Id`. Заголовок обязателен на всех маршрутах, кроме `GET /health`.
+Оба читают пользователя только из заголовка `X-Auth-User-Id`. Заголовок обязателен на всех их маршрутах, кроме `GET /health`. `X-User-Id`, cookie и `Authorization` личность не задают. `X-Auth-Role: BLOCKED` — `403`, даже если UUID на месте.
 
 `X-Request-Id` необязателен. Сервис возвращает его в ответе: принятый либо новый UUID.
 
@@ -32,7 +32,8 @@
 | HTTP | `code` | Когда |
 |------|--------|--------|
 | 400 | `validation_error` | Неверный query, JSON или имя файла. В `details.fields` — имена полей. |
-| 401 | `unauthenticated` | Нет `X-User-Id` или это не UUID. |
+| 401 | `unauthenticated` | Нет `X-Auth-User-Id` или это не UUID. |
+| 403 | `forbidden` | `X-Auth-Role` равен `BLOCKED`. |
 | 404 | `file_not_found` | Нет файла, он `deleted`, либо он чужой. |
 | 404 | `chat_not_found` | Нет чата или он чужой. |
 | 409 | `duplicate_file` | Тот же SHA-256 уже есть у пользователя не в статусе `deleted`. В `details.file_id` — существующий id. |

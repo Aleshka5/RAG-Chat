@@ -2,7 +2,7 @@
 
 База MongoDB задаётся путём в `MONGODB_URI` (по умолчанию база `rag`). Время хранится как BSON Date (UTC) и в API сериализуется как ISO-8601 с суффиксом `Z`. `_id` — внутренний ObjectId и в API не отдаётся.
 
-Публичные идентификаторы — UUID версии 4, строкой в каноническом виде `8-4-4-4-12` в нижнем регистре.
+Идентификаторы ресурсов (`file_id`, `chat_id`, `message_id`) — UUID версии 4, строкой в каноническом виде `8-4-4-4-12` в нижнем регистре. `user_id` — тот же формат, но это `sub` из `X-Auth-User-Id`; версию UUID выбирает User-Service, не RAG.
 
 ## Статусы файла
 
@@ -39,7 +39,7 @@ stateDiagram-v2
 | Поле | Тип | Правило |
 |------|-----|---------|
 | `file_id` | string | UUID v4, уникальный. |
-| `user_id` | string | UUID из `X-User-Id`. |
+| `user_id` | string | UUID из `X-Auth-User-Id` (JWT `sub`). |
 | `file_name` | string | Имя, как его показал пользователь, после отсечения пути. До 255 символов. |
 | `safe_name` | string | Имя внутри `s3_key`. |
 | `file_size` | int | Размер в байтах, больше 0. |
@@ -124,7 +124,7 @@ db.files.createIndex(
 | Поле | Тип | Правило |
 |------|-----|---------|
 | `file_id` | string | |
-| `user_id` | string | |
+| `user_id` | string | Тот же UUID, что в `files.user_id`. |
 | `page_number` | int | С 1. |
 | `text` | string | Пустая строка, если `origin=empty`. |
 | `origin` | string | `text`, `ocr` или `empty`. |
@@ -143,7 +143,7 @@ db.file_pages.createIndex({ file_id: 1, page_number: 1 }, { unique: true })
 | Поле | Тип | Правило |
 |------|-----|---------|
 | `chat_id` | string | UUID v4, уникальный. |
-| `user_id` | string | Владелец. |
+| `user_id` | string | Владелец, тот же UUID, что в `files.user_id`. |
 | `title` | string | До первого сообщения — `Новый чат`. Затем обрезка текста первого вопроса. |
 | `created_at` | datetime | |
 | `updated_at` | datetime | Обновляется при новом завершённом ходе. |
@@ -163,7 +163,7 @@ db.chats.createIndex({ user_id: 1, updated_at: -1 })
 |------|-----|---------|
 | `message_id` | string | UUID v4, уникальный. |
 | `chat_id` | string | |
-| `user_id` | string | Дублируется, чтобы выбирать сообщения только владельца. |
+| `user_id` | string | Тот же UUID владельца, чтобы выбирать сообщения без соединения с чатом. |
 | `role` | string | `user` или `assistant`. |
 | `content` | string | Текст сообщения. |
 | `sources` | array | Только у `assistant`. У `user` поля нет. |

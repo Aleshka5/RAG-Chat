@@ -9,7 +9,9 @@
 ```mermaid
 flowchart LR
     user[Пользователь]
-    gateway[Gateway]
+    caddy[Caddy]
+    gateway[Auth Gateway]
+    edge[rag-edge]
     frontend[Frontend]
     files[File Collector]
     chat[Chat]
@@ -23,10 +25,12 @@ flowchart LR
     mongo[MongoDB]
     qdrant[Qdrant]
 
-    user --> gateway
-    gateway --> frontend
-    gateway --> files
-    gateway --> chat
+    user --> caddy
+    caddy --> gateway
+    gateway --> edge
+    edge --> frontend
+    edge --> files
+    edge --> chat
     files --> s3
     files --> mongo
     files --> mq
@@ -46,14 +50,16 @@ flowchart LR
     chat --> llm
 ```
 
-Gateway на диаграмме — существующий компонент. Репозиторий его не содержит.
+Caddy и Auth Gateway — существующие компоненты. Репозиторий их не содержит. В этом репозитории только `rag-edge`: он смотрит в сеть, к которой подключён gateway, и внутрь сети RAG. Контракт — [gateway.md](gateway.md).
 
 ## Компоненты
 
 | Компонент | Тип | Обязанность |
 |-----------|-----|-------------|
-| Gateway | внешний | Аутентификация. В запрос к File Collector и Chat подставляет `X-User-Id`. Другие публичные сервисы снаружи не торчат. |
-| Frontend | клиент | Загрузка файлов, список, чат, предпросмотр PDF. |
+| Caddy | внешний | TLS. Один `reverse_proxy` на Auth Gateway. |
+| Auth Gateway | внешний | Access JWT, маршрут хоста `rag.filenkov.store`, заголовки `X-Auth-*`. |
+| rag-edge | HTTP этого репозитория | Единственный процесс на сети `rag_edge`. Разводит `/api/files`, `/api/chats` и UI. |
+| Frontend | клиент | Загрузка файлов, список, чат, предпросмотр PDF. Заголовки личности не ставит. |
 | File Collector | HTTP | Приём PDF, список, метаданные, отдача байтов, постановка удаления. |
 | Processor | consumer | Чтение PDF, OCR, чанкинг, эмбеддинг, запись в Qdrant, статус `ready` или `error`. |
 | Deletion Worker | consumer | Удаление объекта и векторов, статус `deleted`. |
@@ -70,17 +76,17 @@ Processor не вызывает LLM. Текст страницы хранитс�
 
 ## Доверие
 
-Публичные сервисы считают `X-User-Id` уже проверенным gateway. Они не принимают логин и пароль и не выпускают сессии.
+File Collector и Chat считают `X-Auth-User-Id` уже проверенным Auth Gateway. Они не принимают логин, пароль, cookie и JWT и не выпускают сессии. `X-User-Id` не является идентификатором RAG.
 
-Отсутствие заголовка или значение не в формате UUID — `401`. Ресурс другого пользователя выглядит как `404`.
+Нет `X-Auth-User-Id` или это не UUID — `401`. `X-Auth-Role` со значением `BLOCKED` — `403`. Ресурс другого пользователя выглядит как `404`.
 
-File Collector, Chat, OCR, Embedding, Processor и Deletion Worker доступны только из сети приложения и с адреса gateway. OCR и Embedding не проверяют пользователя: любой, кто до них достучится, может отправить текст. Это допустимо только внутри сети.
+Сеть `rag_internal` не отдаётся наружу и не подключается к gateway. На сети `rag_edge` сидит только `rag-edge`; gateway подключается к ней, чтобы проксировать на edge. OCR и Embedding не проверяют пользователя: любой, кто до них достучится внутри `rag_internal`, может отправить текст. Снаружи этой сети их нет.
 
 Секреты (`LLM_API_KEY`, ключи MinIO) приходят из окружения и не пишутся в логи.
 
 ## Поток загрузки
 
-1. Gateway передаёт загрузку в File Collector вместе с `X-User-Id`.
+1. Auth Gateway передаёт загрузку на `rag-edge` с `X-Auth-User-Id`. Edge отдаёт её File Collector.
 2. File Collector проверяет PDF, считает SHA-256, пишет объект в MinIO и документ `uploaded` в MongoDB.
 3. Публикует `doc.process` и отвечает `202`.
 4. Processor забирает одно сообщение, переводит файл в `processing`, строит чанки, пишет Qdrant и ставит `ready` либо `error`.
@@ -115,7 +121,7 @@ File Collector, Chat, OCR, Embedding, Processor и Deletion Worker доступ�
 
 ## Наблюдаемость
 
-Каждый HTTP-сервис отдаёт `GET /health` без `X-User-Id`.
+Каждый HTTP-сервис отдаёт `GET /health` без `X-Auth-User-Id`. Публичный `GET /health` хоста отвечает сам `rag-edge`.
 
 Логи — JSON. В каждой записи, где значения известны: `service`, `request_id`, `message_id`, `file_id`, `user_id`, `chat_id`. Текст документов, байты PDF, промпт с контекстом и секреты в логи не попадают. На уровне `debug` допустим хеш и длины, но не сам текст.
 
