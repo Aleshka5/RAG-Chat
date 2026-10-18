@@ -73,6 +73,33 @@ def test_text_layer_pdf_reaches_ready_with_page_count() -> None:
     assert store.pages_done_history[0] <= store.pages_done_history[-1]
 
 
+def test_scanned_pdf_puts_ocr_phrase_in_the_retrieved_payload() -> None:
+    scan_phrase = "уникальная фраза со скана"
+    settings = make_settings()
+    document = file_document()
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(pdf_bytes([""]))
+    ocr = FakeOcr(text=scan_phrase)
+    pipeline, ocr, _embedding, qdrant = build_pipeline(settings, store, blobs, ocr=ocr)
+    result = pipeline.handle(message_for(document), redelivered=False, headers={"x-request-id": "scan"})
+    assert result.action == "ack"
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved is not None
+    assert saved["status"] == "ready"
+    assert ocr.calls
+    assert qdrant.points
+    payloads = [point["payload"] for point in qdrant.points.values()]
+    matched = [payload for payload in payloads if scan_phrase in payload["text"]]
+    assert matched
+    payload = matched[0]
+    assert payload["source"] == "ocr"
+    assert payload["document_id"] == document["file_id"]
+    assert payload["user_id"] == USER_ID
+    assert payload["page_number"] == 1
+    assert isinstance(payload["chunk_index"], int)
+
+
 def test_corrupt_pdf_sets_error_and_stays_in_the_collection() -> None:
     settings = make_settings()
     document = file_document()

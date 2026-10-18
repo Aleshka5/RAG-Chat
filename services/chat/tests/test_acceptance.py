@@ -166,6 +166,39 @@ async def test_create_list_get_and_validation(api):
     assert foreign.json() == {"error": {"code": "chat_not_found", "message": "Chat not found"}}
 
 
+async def test_scanned_phrase_is_a_source_and_the_answer_contains_it(api):
+    client, world = api
+    scan_phrase = "уникальная фраза со скана"
+    world.add_file(user_id=USER_A, file_id=FILE_A, file_name="Скан.pdf")
+    world.add_point(
+        user_id=USER_A,
+        document_id=FILE_A,
+        text=scan_phrase,
+        page_number=2,
+        chunk_index=0,
+        score=0.8,
+    )
+
+    def echo_context() -> httpx.Response:
+        body = json.loads(world.transport.llm_requests[-1].content.decode())
+        context = body["messages"][0]["content"]
+        return httpx.Response(200, content=openai_sse([context]))
+
+    world.transport.llm_script.append(echo_context)
+    created = await _create_chat(client)
+    response = await _ask(client, created["chat_id"], "Что написано на скане?")
+    assert response.status_code == 200
+    events = parse_sse(response.content)
+    meta = events[0][1]
+    assert [item["file_id"] for item in meta["sources"]] == [FILE_A]
+    assert meta["sources"][0]["snippet"] == scan_phrase
+    assert meta["sources"][0]["page_number"] == 2
+    prompt = world.transport.llm_body()["messages"][0]["content"]
+    assert scan_phrase in prompt
+    answer = "".join(data["content"] for name, data in events if name == "delta")
+    assert scan_phrase in answer
+
+
 async def test_question_streams_meta_then_delta_then_done_with_page(api):
     client, world = api
     _ready_pair(world)
