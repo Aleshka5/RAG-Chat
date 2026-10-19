@@ -22,8 +22,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /uvx /bin/
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin ocr
 
 WORKDIR /app
-# PaddlePaddle 2.6 CPU inference is single-threaded by default; 6 is the
-# measured optimum (8+ threads do not help further). Override per deployment.
+# One core per process. PaddleOCR 2.10 otherwise calls
+# set_cpu_math_library_num_threads(10). OMP_NUM_THREADS alone does not
+# replace that call, and an unset OpenMP pool takes the host CPU count
+# on the request thread. Concurrent pages are separate processes.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
@@ -33,7 +35,9 @@ ENV UV_COMPILE_BYTECODE=1 \
     OCR_MODEL=paddleocr_multilingual \
     OCR_TIMEOUT=30 \
     LOG_LEVEL=info \
-    OMP_NUM_THREADS=6 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
     PYTHONUNBUFFERED=1
 
 COPY pyproject.toml uv.lock README.md ./

@@ -15,6 +15,7 @@ multilingual `Multilingual_PP-OCRv3_det`. The angle classifier is
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -25,6 +26,21 @@ logger = logging.getLogger("ocr")
 
 PADDLE_OCR_VERSION = "PP-OCRv4"
 PADDLE_LANGS = ("en", "ru")
+# PaddleOCR 2.10 defaults this argument to 10 and passes it to
+# set_cpu_math_library_num_threads. Bare Paddle Inference defaults to 1.
+# OMP_NUM_THREADS does not replace that call. One process uses one core.
+CPU_MATH_THREADS = 1
+
+
+def pin_native_thread_pools() -> None:
+    """Size OpenMP, MKL, and OpenBLAS to one thread before Paddle loads.
+
+    The math-library call inside predictor setup is thread-local. Inference
+    runs on the worker that built the predictor; any other thread falls
+    back to these variables, or to the host CPU count when they are unset.
+    """
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        os.environ[name] = "1"
 
 
 class OcrEngine(Protocol):
@@ -46,9 +62,13 @@ class PaddleMultilingualEngine:
     """Real PP-OCRv4 engine. Construction downloads and loads the weights."""
 
     def __init__(self) -> None:
+        pin_native_thread_pools()
         from paddleocr import PaddleOCR
 
-        logger.info("loading OCR model paddleocr_multilingual (PP-OCRv4, languages en and ru)")
+        logger.info(
+            "loading OCR model paddleocr_multilingual (PP-OCRv4, en and ru, cpu_threads=%s)",
+            CPU_MATH_THREADS,
+        )
         self._pipelines = {
             lang: PaddleOCR(
                 lang=lang,
@@ -56,6 +76,8 @@ class PaddleMultilingualEngine:
                 use_angle_cls=True,
                 use_gpu=False,
                 show_log=False,
+                cpu_threads=CPU_MATH_THREADS,
+                enable_mkldnn=False,
             )
             for lang in PADDLE_LANGS
         }

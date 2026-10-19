@@ -84,7 +84,9 @@
 | `OCR_PORT` | `8090` | |
 | `OCR_MODEL` | `paddleocr_multilingual` | PP-OCRv4, `en` + `ru`. |
 | `OCR_TIMEOUT` | `30` | Серверный бюджет разбора. |
-| `OMP_NUM_THREADS` | `6` | Число CPU-потоков Paddle (OpenMP); без переменной инференс однопоточный. |
+| `OMP_NUM_THREADS` | `1` | Пул OpenMP. Вместе с `MKL_NUM_THREADS` и `OPENBLAS_NUM_THREADS`. Один процесс — одно ядро. |
+| `MKL_NUM_THREADS` | `1` | Пул MKL. Поднимать отдельно от `cpu_threads` нельзя. |
+| `OPENBLAS_NUM_THREADS` | `1` | Пул OpenBLAS. |
 
 ## Embedding
 

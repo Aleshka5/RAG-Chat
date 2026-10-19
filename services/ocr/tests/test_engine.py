@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import io
+import os
 import sys
+import threading
 import types
 
 import pytest
+from fastapi.testclient import TestClient
 from PIL import Image
 
 from ocr_service.engine import (
+    CPU_MATH_THREADS,
     PADDLE_LANGS,
     PADDLE_OCR_VERSION,
     PaddleMultilingualEngine,
+    pin_native_thread_pools,
 )
 from ocr_service.main import main
 
@@ -23,9 +28,11 @@ class _RecordingPaddle:
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
         self.lang = kwargs["lang"]
+        self.thread_id = threading.get_ident()
         _RecordingPaddle.instances.append(self)
 
     def ocr(self, image: object, cls: bool = True) -> list:
+        self.ocr_thread = threading.get_ident()
         assert cls is True
         assert getattr(image, "ndim", None) == 3
         if self.lang == "en":
@@ -64,6 +71,8 @@ def test_production_engine_constructs_ppocrv4_en_and_ru(
     assert {item.kwargs["ocr_version"] for item in constructed} == {PADDLE_OCR_VERSION}
     assert all(item.kwargs["use_gpu"] is False for item in constructed)
     assert all(item.kwargs["use_angle_cls"] is True for item in constructed)
+    assert all(item.kwargs["cpu_threads"] == CPU_MATH_THREADS for item in constructed)
+    assert all(item.kwargs["enable_mkldnn"] is False for item in constructed)
 
     text, confidence = engine.recognize(_image())
     assert text == "Hello\nПривет"
@@ -113,6 +122,21 @@ def test_main_loads_real_engine_before_binding_port(
     assert app.state.settings.ocr_port == 8090
     assert [item.kwargs["lang"] for item in _RecordingPaddle.instances] == ["en", "ru"]
     assert {item.kwargs["ocr_version"] for item in _RecordingPaddle.instances} == {"PP-OCRv4"}
+    assert {item.kwargs["cpu_threads"] for item in _RecordingPaddle.instances} == {CPU_MATH_THREADS}
+    loader_threads = {item.thread_id for item in _RecordingPaddle.instances}
+    assert len(loader_threads) == 1
+    assert threading.get_ident() not in loader_threads
+
+    png = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(png, format="PNG")
+    with TestClient(app) as client:
+        response = client.post(
+            "/ocr",
+            files={"image": ("page.png", png.getvalue(), "image/png")},
+        )
+    assert response.status_code == 200
+    assert response.json()["text"] == "Hello\nПривет"
+    assert {item.ocr_thread for item in _RecordingPaddle.instances} == loader_threads
 
 
 def test_main_exits_when_model_load_fails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,6 +152,14 @@ def test_main_exits_when_model_load_fails(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
+
+
+def test_native_thread_pools_are_pinned_to_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        monkeypatch.setenv(name, "6")
+    pin_native_thread_pools()
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        assert os.environ[name] == "1"
 
 
 def test_png_round_trip_bytes() -> None:

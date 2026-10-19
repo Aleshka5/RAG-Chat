@@ -23,14 +23,21 @@ from ocr_service.images import decode_raster
 logger = logging.getLogger("ocr")
 
 
-def create_app(engine: OcrEngine, settings: Settings | None = None) -> FastAPI:
+def create_app(
+    engine: OcrEngine,
+    settings: Settings | None = None,
+    executor: ThreadPoolExecutor | None = None,
+) -> FastAPI:
     """Build the service around an already constructed engine.
 
-    Production startup constructs `PaddleMultilingualEngine` before this
-    function runs. Tests pass a fake engine so model weights are not downloaded.
+    Production startup constructs `PaddleMultilingualEngine` on `executor`
+    before this function runs, then passes that same pool in. Paddle's
+    predictor is used only from the thread that created it. Tests pass a
+    fake engine so model weights are not downloaded.
     """
     resolved = settings or Settings()
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr")
+    if executor is None:
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
