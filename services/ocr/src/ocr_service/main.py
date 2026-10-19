@@ -9,7 +9,8 @@ import uvicorn
 
 from ocr_service.app import create_app
 from ocr_service.config import ConfigError, Settings
-from ocr_service.engine import PaddleMultilingualEngine
+from ocr_service.engine import SuryaEngine
+from ocr_service.llama import start_reader
 
 logger = logging.getLogger("ocr")
 
@@ -38,7 +39,7 @@ def main() -> None:
         settings.ocr_timeout,
     )
     try:
-        engine = PaddleMultilingualEngine()
+        engine = SuryaEngine(start_reader(settings))
     except Exception:
         logger.exception("OCR model failed to load")
         raise SystemExit(1) from None

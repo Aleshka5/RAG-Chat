@@ -5,27 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "ocr"
 version = "1.0.0"
-description = "Internal OCR service: PaddleOCR PP-OCRv4 for English and Russian"
+description = "Internal OCR service: Surya OCR 2 via llama.cpp"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "albumentations>=1.4.10,<1.5",
+    "beautifulsoup4>=4.12",
     "fastapi>=0.115.6",
-    "numpy>=1.26.4,<2",
-    "opencv-contrib-python>=4.6,<4.11",
-    "opencv-python>=4.6,<4.11",
-    "paddleocr==2.10.0",
-    "paddlepaddle==2.6.2",
+    "httpx>=0.28.0",
+    "huggingface-hub>=0.26.0",
     "pillow>=10.4.0",
     "python-multipart>=0.0.18",
-    "scikit-image>=0.22,<0.25",
-    "setuptools>=70",
     "uvicorn>=0.34.0",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.0",
     "pytest>=8.3.0",
     "ruff>=0.9.0",
 ]

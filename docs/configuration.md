@@ -38,7 +38,7 @@
 | `MAX_PROCESS_ATTEMPTS` | `8` | Сколько доставок одного сообщения можно начать, не дойдя до `ready`. |
 | `MIN_EXTRACTED_CHARS` | `50` | Страница короче или равна порогу идёт в OCR. |
 | `OCR_RENDER_DPI` | `300` | |
-| `OCR_TIMEOUT` | `30` | Секунды на один запрос страницы. |
+| `OCR_TIMEOUT` | `60` | Секунды на один запрос страницы. |
 | `OCR_MAX_ATTEMPTS` | `3` | |
 | `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
 | `EMBEDDING_BATCH_SIZE` | `16` | Совпадает с лимитом Embedding. |
@@ -82,9 +82,9 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `OCR_PORT` | `8090` | |
-| `OCR_MODEL` | `paddleocr_multilingual` | PP-OCRv4, `en` + `ru`. |
-| `OCR_TIMEOUT` | `30` | Серверный бюджет разбора. |
-| `OMP_NUM_THREADS` | `6` | Число CPU-потоков Paddle (OpenMP); без переменной инференс однопоточный. |
+| `OCR_MODEL` | `surya-ocr-2` | Surya OCR 2, одна модель на `en` и `ru`. Другое значение не даёт процессу стартовать. |
+| `OCR_TIMEOUT` | `60` | Серверный бюджет разбора одной страницы. |
+| `OCR_LLAMA_URL` | `http://127.0.0.1:8092` | llama-server внутри контейнера. В `rag_internal` этот порт не публикуется. |
 
 ## Embedding
 
