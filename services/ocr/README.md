@@ -54,7 +54,9 @@
 | `OCR_PORT` | `8090` | Порт внутри сети. |
 | `OCR_MODEL` | `paddleocr_multilingual` | PP-OCRv4, `en` + `ru`. Другое значение не даёт процессу стартовать. |
 | `OCR_TIMEOUT` | `30` | Секунды на один разбор. |
-| `OMP_NUM_THREADS` | `6` | Число CPU-потоков Paddle (OpenMP). Без переменной инференс однопоточный. |
+| `OMP_NUM_THREADS` | `1` | Пул OpenMP. Вместе с `MKL_NUM_THREADS` и `OPENBLAS_NUM_THREADS`. Один процесс — одно ядро. |
+| `MKL_NUM_THREADS` | `1` | Пул MKL. |
+| `OPENBLAS_NUM_THREADS` | `1` | Пул OpenBLAS. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warning`, `error`. |
 
 Неверное значение пишется в лог только именем переменной.
