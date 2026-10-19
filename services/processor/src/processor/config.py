@@ -43,7 +43,7 @@ class Settings:
     max_process_attempts: int = 8
     min_extracted_chars: int = 50
     ocr_render_dpi: int = 300
-    ocr_timeout: float = 600
+    ocr_timeout: float = 60
     ocr_max_attempts: int = 3
     embedding_timeout: float = 30
     embedding_batch_size: int = 16
@@ -86,7 +86,7 @@ def load_settings(environ: os._Environ[str] | dict[str, str] | None = None) -> S
             max_process_attempts=_int(env, "MAX_PROCESS_ATTEMPTS", 8),
             min_extracted_chars=_int(env, "MIN_EXTRACTED_CHARS", 50),
             ocr_render_dpi=_int(env, "OCR_RENDER_DPI", 300),
-            ocr_timeout=_float(env, "OCR_TIMEOUT", 600),
+            ocr_timeout=_float(env, "OCR_TIMEOUT", 60),
             ocr_max_attempts=_int(env, "OCR_MAX_ATTEMPTS", 3),
             embedding_timeout=_float(env, "EMBEDDING_TIMEOUT", 30),
             embedding_batch_size=_int(env, "EMBEDDING_BATCH_SIZE", 16),

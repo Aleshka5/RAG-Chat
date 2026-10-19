@@ -133,7 +133,7 @@ def test_ocr_starts_from_defaults() -> None:
     assert cfg["OCR_PORT"] == 8090
     assert cfg["OCR_MODEL"] == "surya-ocr-2"
     assert cfg["OCR_LLAMA_URL"] == "http://127.0.0.1:8092"
-    assert cfg["OCR_TIMEOUT"] == 600
+    assert cfg["OCR_TIMEOUT"] == 60
     assert cfg["EMBEDDING_MODEL"] == "google/embeddinggemma-2"
     assert cfg["EMBEDDING_GGUF"] == "embeddinggemma-2-Q8_0.gguf"
 

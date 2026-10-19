@@ -14,7 +14,7 @@ def test_defaults_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings.from_env()
     assert settings.ocr_port == 8090
     assert settings.ocr_model == MODEL_NAME
-    assert settings.ocr_timeout == 600
+    assert settings.ocr_timeout == 60
     assert settings.llama_url == "http://127.0.0.1:8092"
     assert settings.log_level == "info"
 
@@ -22,13 +22,13 @@ def test_defaults_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_explicit_values(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OCR_PORT", "8090")
     monkeypatch.setenv("OCR_MODEL", "surya-ocr-2")
-    monkeypatch.setenv("OCR_TIMEOUT", "600")
+    monkeypatch.setenv("OCR_TIMEOUT", "60")
     monkeypatch.setenv("OCR_LLAMA_URL", "http://127.0.0.1:8092/")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     settings = Settings.from_env()
     assert settings.ocr_port == 8090
     assert settings.ocr_model == "surya-ocr-2"
-    assert settings.ocr_timeout == 600
+    assert settings.ocr_timeout == 60
     assert settings.llama_url == "http://127.0.0.1:8092"
     assert settings.log_level == "debug"
 
