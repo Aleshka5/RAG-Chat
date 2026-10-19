@@ -55,7 +55,7 @@ docs/
 
 | Задача | Инструмент |
 |--------|------------|
-| Контейнеры и локальный стенд | `docker-compose.yml` в корне. Проверка — `make config` (`docker compose config`). Поднятие — `make up` (`docker compose up --build`). Пример в `docs/deployment.md` тот же по составу; `podman compose -f docker-compose.yml` читает этот файл. |
+| Контейнеры и локальный стенд | `docker-compose.yml` в корне. Проверка — `make config` (`podman compose config`). Поднятие — `make up` (`podman compose up --build`). Пример в `docs/deployment.md` тот же по составу; `podman compose -f docker-compose.yml` читает этот файл. |
 | Зависимости Python | `uv`. Зафиксированный `uv.lock` коммитится. `pip`, Poetry и PDM как способ установки не используются. |
 | Команды разработки | Корневой `Makefile`. Агент и человек вызывают `make`, а не сырые команды стенда. |
 | Версия Python | 3.12. |

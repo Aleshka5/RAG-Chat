@@ -1,13 +1,13 @@
 .PHONY: config up down lint test test-common
 
 config:
-	docker compose config
+	podman compose config
 
 up:
-	docker compose up --build
+	podman compose up --build -d
 
 down:
-	docker compose down
+	podman compose down
 
 test-common:
 	cd packages/rag-common && uv run pytest
