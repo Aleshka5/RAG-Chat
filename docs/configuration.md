@@ -84,6 +84,7 @@
 | `OCR_PORT` | `8090` | |
 | `OCR_MODEL` | `paddleocr_multilingual` | PP-OCRv4, `en` + `ru`. |
 | `OCR_TIMEOUT` | `30` | Серверный бюджет разбора. |
+| `OMP_NUM_THREADS` | `6` | Число CPU-потоков Paddle (OpenMP); без переменной инференс однопоточный. |
 
 ## Embedding
 

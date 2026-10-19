@@ -22,6 +22,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /uvx /bin/
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin ocr
 
 WORKDIR /app
+# PaddlePaddle 2.6 CPU inference is single-threaded by default; 6 is the
+# measured optimum (8+ threads do not help further). Override per deployment.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
@@ -31,6 +33,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     OCR_MODEL=paddleocr_multilingual \
     OCR_TIMEOUT=30 \
     LOG_LEVEL=info \
+    OMP_NUM_THREADS=6 \
     PYTHONUNBUFFERED=1
 
 COPY pyproject.toml uv.lock README.md ./
