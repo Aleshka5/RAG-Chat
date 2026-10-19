@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 import shutil
 import subprocess
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -27,6 +29,7 @@ from ocr_service.engine import (
     PAGE_CONTEXT,
     PageReader,
     mean_token_probability,
+    repeats,
 )
 
 logger = logging.getLogger("ocr")
@@ -53,9 +56,14 @@ class LlamaReader(PageReader):
         process: subprocess.Popen[bytes] | None = None,
     ) -> None:
         self._owns_client = client is None
-        self._client = client or httpx.Client(base_url=base_url, timeout=timeout_seconds)
+        self._client = client or httpx.Client(base_url=base_url, timeout=None)
         self._timeout = timeout_seconds
         self._process = process
+        self._deadline = 0.0
+
+    def begin_page(self) -> None:
+        """One page, including a repeat retry, shares the OCR budget."""
+        self._deadline = time.monotonic() + self._timeout
 
     def complete(
         self,
@@ -63,7 +71,12 @@ class LlamaReader(PageReader):
         prompt: str,
         *,
         temperature: float,
+        top_p: float,
     ) -> tuple[str, float | None]:
+        if self._deadline <= 0:
+            self.begin_page()
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError
         payload = {
             "model": MODEL_ALIAS,
             "messages": [
@@ -77,24 +90,37 @@ class LlamaReader(PageReader):
             ],
             "max_tokens": MAX_NEW_TOKENS,
             "temperature": temperature,
-            "top_p": 0.1,
+            "top_p": top_p,
             "logprobs": True,
+            "stream": True,
         }
+        # read=None: the page deadline below closes the socket. A per-chunk
+        # read timeout would let a loop run for as long as tokens keep arriving.
+        timeout = httpx.Timeout(connect=30.0, read=None, write=30.0, pool=30.0)
         try:
-            response = self._client.post(
+            stream = self._client.stream(
+                "POST",
                 "/v1/chat/completions",
                 json=payload,
-                timeout=self._timeout,
+                timeout=timeout,
             )
+            response = stream.__enter__()
+            try:
+                if response.status_code != 200:
+                    raise RuntimeError("llama-server request failed")
+                return _read_stream(response.iter_lines(), self._deadline)
+            finally:
+                # Closing mid-generation cancels the llama-server task. The
+                # server may reset the socket; that must not replace the text
+                # or the timeout already decided above.
+                try:
+                    stream.__exit__(None, None, None)
+                except Exception:
+                    logger.info("llama-server stream closed")
+        except TimeoutError:
+            raise
         except httpx.HTTPError as exc:
             raise RuntimeError("llama-server request failed") from exc
-        if response.status_code != 200:
-            raise RuntimeError("llama-server request failed")
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise RuntimeError("llama-server request failed") from exc
-        return _completion(body)
 
     def healthy(self) -> bool:
         try:
@@ -183,6 +209,8 @@ def build_llama_server_command(
         "--alias",
         MODEL_ALIAS,
         "--jinja",
+        "--reasoning",
+        "off",
         "--ctx-size",
         str(PAGE_CONTEXT),
         "--image-min-tokens",
@@ -244,19 +272,60 @@ def _data_url(image: Image.Image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def _completion(body: object) -> tuple[str, float | None]:
+def _read_stream(lines: Iterable[str], deadline: float) -> tuple[str, float | None]:
+    """Read SSE until the model stops, the tail repeats, or the page budget ends.
+
+    Closing the stream on the way out drops the llama-server task. A repeating
+    completion would otherwise run until max_tokens and the minute timeout.
+    """
+    parts: list[str] = []
+    logprobs: list[object] = []
+    for line in lines:
+        if time.monotonic() >= deadline:
+            logger.info("OCR page budget elapsed, stopping generation")
+            raise TimeoutError
+        finished, piece, tokens = _sse_delta(line)
+        if finished:
+            break
+        if piece:
+            parts.append(piece)
+        logprobs.extend(tokens)
+        if repeats("".join(parts)):
+            logger.info("completion repeated, stopping generation")
+            break
+    return "".join(parts), mean_token_probability(logprobs)
+
+
+def _sse_delta(line: str) -> tuple[bool, str, list[object]]:
+    """One SSE line: finished, text added by this line, token logprobs."""
+    stripped = line.strip()
+    if not stripped.startswith("data:"):
+        return False, "", []
+    data = stripped[len("data:") :].strip()
+    if data == "":
+        return False, "", []
+    if data == "[DONE]":
+        return True, "", []
+    try:
+        body = json.loads(data)
+    except ValueError as exc:
+        raise RuntimeError("llama-server request failed") from exc
     if not isinstance(body, dict):
+        raise RuntimeError("llama-server request failed")
+    if body.get("error") is not None:
         raise RuntimeError("llama-server request failed")
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise RuntimeError("llama-server request failed")
-    message = choices[0].get("message")
-    if not isinstance(message, dict):
-        raise RuntimeError("llama-server request failed")
-    content = message.get("content")
-    text = content if isinstance(content, str) else ""
-    logprobs = choices[0].get("logprobs")
-    tokens: object = None
-    if isinstance(logprobs, dict):
-        tokens = logprobs.get("content")
-    return text, mean_token_probability(tokens)
+        return False, "", []
+    choice = choices[0]
+    delta = choice.get("delta")
+    piece = ""
+    if isinstance(delta, dict):
+        content = delta.get("content")
+        if isinstance(content, str):
+            piece = content
+    logprobs = choice.get("logprobs")
+    tokens: list[object] = []
+    if isinstance(logprobs, dict) and isinstance(logprobs.get("content"), list):
+        tokens = logprobs["content"]
+    return False, piece, tokens
