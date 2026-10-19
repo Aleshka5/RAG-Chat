@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+import time
 from pathlib import Path
 
 import pytest
@@ -12,12 +14,13 @@ from ocr_service.engine import (
     PAGE_CONTEXT,
     PAGE_PROMPT,
     SuryaEngine,
+    cut_repeated_tail,
     mean_token_probability,
     page_text,
     repeats,
     scale_to_fit,
 )
-from ocr_service.llama import build_llama_server_command
+from ocr_service.llama import _read_stream, build_llama_server_command
 from ocr_service.main import main
 
 
@@ -28,6 +31,7 @@ class _Reader:
         self.prompts: list[str] = []
         self.sizes: list[tuple[int, int]] = []
         self.temperatures: list[float] = []
+        self.top_ps: list[float] = []
 
     def complete(
         self,
@@ -35,10 +39,12 @@ class _Reader:
         prompt: str,
         *,
         temperature: float,
+        top_p: float,
     ) -> tuple[str, float | None]:
         self.prompts.append(prompt)
         self.sizes.append(image.size)
         self.temperatures.append(temperature)
+        self.top_ps.append(top_p)
         return self.raw, self.confidence
 
 
@@ -66,6 +72,7 @@ def test_recognize_uses_the_training_prompt_and_fitted_image() -> None:
     assert confidence == 0.8
     assert reader.prompts == [PAGE_PROMPT]
     assert reader.temperatures == [0.0]
+    assert reader.top_ps == [0.1]
     width, height = reader.sizes[0]
     assert width % 28 == 0 and height % 28 == 0
     assert width * height <= 3072 * 2048
@@ -75,6 +82,7 @@ def test_repeated_completion_is_sampled_once_more() -> None:
     reader = _Reader("aaaa" * 40)
     SuryaEngine(reader).recognize(Image.new("RGB", (64, 64), "white"))
     assert reader.temperatures == [0.0, 0.2]
+    assert reader.top_ps == [0.1, 0.95]
 
 
 def test_scale_to_fit_shrinks_a_large_page() -> None:
@@ -87,9 +95,44 @@ def test_scale_to_fit_shrinks_a_large_page() -> None:
 def test_repeat_detector_and_token_probability() -> None:
     assert repeats("abc" * 30)
     assert not repeats("Hello Привет")
+    assert cut_repeated_tail("Hello" + "ab" * 30) == "Hello"
+    assert cut_repeated_tail("Hello Привет") == "Hello Привет"
     assert mean_token_probability([{"logprob": 0.0}, {"logprob": -0.693147}]) == pytest.approx(0.75)
     assert mean_token_probability([]) is None
     assert mean_token_probability([{"logprob": float("nan")}]) is None
+
+
+def test_thinking_trace_is_not_page_text() -> None:
+    raw = (
+        "<think>reasoning that must not be indexed</think>"
+        '<div data-label="Text" data-bbox="0 0 1 1">Строка</div>'
+    )
+    assert page_text(raw) == "Строка"
+    assert page_text("<think>never closed") == ""
+
+
+def test_stream_stops_when_the_tail_repeats() -> None:
+    chunk = {
+        "choices": [
+            {
+                "delta": {"content": "ab"},
+                "logprobs": {"content": [{"logprob": 0.0}]},
+            }
+        ]
+    }
+    lines = [f"data: {json.dumps(chunk)}" for _ in range(40)]
+    lines.append('data: {"choices":[{"delta":{"content":"TAIL"}}]}')
+    lines.append("data: [DONE]")
+    text, confidence = _read_stream(lines, time.monotonic() + 30)
+    assert "TAIL" not in text
+    assert repeats(text)
+    assert confidence == 1.0
+
+
+def test_stream_budget_does_not_return_a_partial_page() -> None:
+    lines = ['data: {"choices":[{"delta":{"content":"Hello"}}]}']
+    with pytest.raises(TimeoutError):
+        _read_stream(lines, time.monotonic() - 1)
 
 
 def test_llama_command_does_not_cap_threads_or_memory() -> None:
@@ -111,6 +154,7 @@ def test_llama_command_does_not_cap_threads_or_memory() -> None:
     assert command[command.index("--mmproj") + 1].endswith("surya-2-mmproj.gguf")
     assert "--jinja" in flags
     assert "-ngl" in flags
+    assert command[command.index("--reasoning") + 1] == "off"
 
 
 def test_main_loads_engine_before_binding_port(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,6 +169,7 @@ def test_main_loads_engine_before_binding_port(monkeypatch: pytest.MonkeyPatch) 
             prompt: str,
             *,
             temperature: float,
+            top_p: float,
         ) -> tuple[str, float | None]:
             return '<div data-label="Text" data-bbox="0 0 1 1">ok</div>', 0.5
 

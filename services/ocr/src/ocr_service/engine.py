@@ -42,6 +42,7 @@ class PageReader(Protocol):
         prompt: str,
         *,
         temperature: float,
+        top_p: float,
     ) -> tuple[str, float | None]:
         """Return the raw completion and the mean token probability."""
 
@@ -53,10 +54,36 @@ class SuryaEngine:
         self._reader = reader
 
     def recognize(self, image: Image.Image) -> tuple[str, float | None]:
+        begin = getattr(self._reader, "begin_page", None)
+        if begin is not None:
+            begin()
         fitted = scale_to_fit(image)
-        raw, confidence = self._reader.complete(fitted, PAGE_PROMPT, temperature=0.0)
+        raw, confidence = self._reader.complete(
+            fitted,
+            PAGE_PROMPT,
+            temperature=0.0,
+            top_p=0.1,
+        )
         if repeats(raw):
-            raw, confidence = self._reader.complete(fitted, PAGE_PROMPT, temperature=0.2)
+            try:
+                retried, retried_confidence = self._reader.complete(
+                    fitted,
+                    PAGE_PROMPT,
+                    temperature=0.2,
+                    top_p=0.95,
+                )
+            except TimeoutError:
+                raw, confidence = cut_repeated_tail(raw), confidence
+            else:
+                if repeats(retried):
+                    first = cut_repeated_tail(raw)
+                    second = cut_repeated_tail(retried)
+                    if len(second) > len(first):
+                        raw, confidence = second, retried_confidence
+                    else:
+                        raw, confidence = first, confidence
+                else:
+                    raw, confidence = retried, retried_confidence
         return page_text(raw), confidence
 
     def close(self) -> None:
@@ -110,7 +137,7 @@ def scale_to_fit(
 
 def page_text(raw: str) -> str:
     """Plain text in the order Surya emitted the blocks."""
-    cleaned = _strip_fences(raw).strip()
+    cleaned = _drop_thinking(_strip_fences(raw)).strip()
     if not cleaned:
         return ""
     soup = BeautifulSoup(cleaned, "html.parser")
@@ -129,14 +156,34 @@ def page_text(raw: str) -> str:
 
 def repeats(text: str) -> bool:
     """True when the tail of the completion is the same short span many times."""
-    if len(text) > 50 and _repeats(text[:-50]):
-        return True
-    return _repeats(text)
+    return _repeat_start(text) is not None or (
+        len(text) > 50 and _repeat_start(text[:-50]) is not None
+    )
 
 
-def _repeats(text: str, base_max_repeats: int = 4, window_size: int = 500) -> bool:
+def cut_repeated_tail(text: str) -> str:
+    """Drop a repeating tail so the page keeps the text that came before the loop."""
+    starts: list[int] = []
+    start = _repeat_start(text)
+    if start is not None:
+        starts.append(start)
+    if len(text) > 50:
+        earlier = _repeat_start(text[:-50])
+        if earlier is not None:
+            starts.append(earlier)
+    if not starts:
+        return text
+    return text[: min(starts)]
+
+
+def _repeat_start(
+    text: str,
+    base_max_repeats: int = 4,
+    window_size: int = 500,
+) -> int | None:
+    """Index where a repeating tail begins, or None when the tail is not a loop."""
     if not text:
-        return False
+        return None
     limit = min(window_size // 2, len(text))
     for seq_len in range(1, limit + 1):
         candidate = text[-seq_len:]
@@ -147,8 +194,8 @@ def _repeats(text: str, base_max_repeats: int = 4, window_size: int = 500) -> bo
             count += 1
             pos -= seq_len
         if count > max_repeats:
-            return True
-    return False
+            return pos + seq_len
+    return None
 
 
 def mean_token_probability(logprobs: object) -> float | None:
@@ -167,6 +214,16 @@ def mean_token_probability(logprobs: object) -> float | None:
     if not probs:
         return None
     return sum(probs) / len(probs)
+
+
+def _drop_thinking(text: str) -> str:
+    """Qwen3.5 writes a reasoning trace before the page when thinking is left on."""
+    if "<think>" not in text:
+        return text
+    closed = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    if "<think>" in closed:
+        return closed.split("<think>", 1)[0]
+    return closed
 
 
 def _strip_fences(text: str) -> str:
