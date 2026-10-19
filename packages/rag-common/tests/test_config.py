@@ -131,7 +131,9 @@ def test_log_level_and_empty_string() -> None:
 def test_ocr_starts_from_defaults() -> None:
     cfg = load_service_config("ocr", {})
     assert cfg["OCR_PORT"] == 8090
-    assert cfg["OCR_MODEL"] == "paddleocr_multilingual"
+    assert cfg["OCR_MODEL"] == "surya-ocr-2"
+    assert cfg["OCR_LLAMA_URL"] == "http://127.0.0.1:8092"
+    assert cfg["OCR_TIMEOUT"] == 600
     assert cfg["EMBEDDING_MODEL"] == "google/embeddinggemma-2"
     assert cfg["EMBEDDING_GGUF"] == "embeddinggemma-2-Q8_0.gguf"
 

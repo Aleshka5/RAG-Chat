@@ -26,11 +26,11 @@ logger = logging.getLogger("ocr")
 def create_app(engine: OcrEngine, settings: Settings | None = None) -> FastAPI:
     """Build the service around an already constructed engine.
 
-    Production startup constructs `PaddleMultilingualEngine` before this
-    function runs. Tests pass a fake engine so model weights are not downloaded.
+    Production startup loads Surya in llama-server before this function runs.
+    Tests pass a fake engine so weights are not downloaded.
     """
     resolved = settings or Settings()
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr")
+    executor = ThreadPoolExecutor(thread_name_prefix="ocr")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -39,6 +39,9 @@ def create_app(engine: OcrEngine, settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
+            close = getattr(engine, "close", None)
+            if close is not None:
+                close()
 
     app = FastAPI(
         title="OCR",

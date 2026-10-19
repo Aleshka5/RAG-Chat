@@ -5,10 +5,12 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
-MODEL_NAME = "paddleocr_multilingual"
+MODEL_NAME = "surya-ocr-2"
 DEFAULT_PORT = 8090
-DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TIMEOUT_SECONDS = 600.0
+DEFAULT_LLAMA_URL = "http://127.0.0.1:8092"
 DEFAULT_LOG_LEVEL = "info"
 LOG_LEVELS = ("debug", "info", "warning", "error")
 
@@ -29,6 +31,7 @@ class Settings:
     ocr_port: int = DEFAULT_PORT
     ocr_model: str = MODEL_NAME
     ocr_timeout: float = DEFAULT_TIMEOUT_SECONDS
+    llama_url: str = DEFAULT_LLAMA_URL
     log_level: str = DEFAULT_LOG_LEVEL
 
     @classmethod
@@ -37,6 +40,7 @@ class Settings:
             ocr_port=_port(os.environ.get("OCR_PORT")),
             ocr_model=_model(os.environ.get("OCR_MODEL")),
             ocr_timeout=_timeout(os.environ.get("OCR_TIMEOUT")),
+            llama_url=_llama_url(os.environ.get("OCR_LLAMA_URL")),
             log_level=_log_level(os.environ.get("LOG_LEVEL")),
         )
 
@@ -87,6 +91,20 @@ def _timeout(raw: str | None) -> float:
     if not math.isfinite(timeout) or timeout <= 0:
         raise ConfigError("OCR_TIMEOUT")
     return timeout
+
+
+def _llama_url(raw: str | None) -> str:
+    value = _present(raw)
+    if value is None:
+        return DEFAULT_LLAMA_URL
+    if value == "":
+        raise ConfigError("OCR_LLAMA_URL")
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ConfigError("OCR_LLAMA_URL")
+    if parsed.path not in {"", "/"}:
+        raise ConfigError("OCR_LLAMA_URL")
+    return value.rstrip("/")
 
 
 def _log_level(raw: str | None) -> str:
