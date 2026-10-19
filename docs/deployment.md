@@ -62,6 +62,10 @@ services:
   file-collector:
     build: ./services/file-collector
     networks: [rag_internal]
+    restart: on-failure
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
       FILE_COLLECTOR_PORT: "8081"
       MAX_UPLOAD_BYTES: "524288000"
@@ -75,6 +79,10 @@ services:
   processor:
     build: ./services/processor
     networks: [rag_internal]
+    restart: on-failure
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -89,6 +97,10 @@ services:
   deletion-worker:
     build: ./services/deletion-worker
     networks: [rag_internal]
+    restart: on-failure
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -143,7 +155,16 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
-    networks: [rag_internal]
+    networks:
+      rag_internal:
+        aliases:
+          - rabbit
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
     volumes: ["rabbit-data:/var/lib/rabbitmq"]
 
 volumes:
