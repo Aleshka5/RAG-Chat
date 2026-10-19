@@ -11,12 +11,17 @@ CONTENT_STATUSES = ("uploaded", "processing", "ready", "error")
 
 def file_indexes() -> list[dict]:
     return [
-        {"keys": [("file_id", 1)], "unique": True},
-        {"keys": [("user_id", 1), ("status", 1)], "unique": False},
-        {"keys": [("user_id", 1), ("created_at", -1)], "unique": False},
+        {"keys": [("file_id", 1)], "unique": True, "name": "file_id_unique"},
+        {"keys": [("user_id", 1), ("status", 1)], "unique": False, "name": "user_id_status"},
+        {
+            "keys": [("user_id", 1), ("created_at", -1)],
+            "unique": False,
+            "name": "user_id_created_at",
+        },
         {
             "keys": [("user_id", 1), ("content_sha256", 1)],
             "unique": True,
+            "name": "user_id_content_sha256_active",
             "partialFilterExpression": {"status": {"$in": list(ACTIVE_STATUSES)}},
         },
     ]

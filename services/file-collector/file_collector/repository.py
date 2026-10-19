@@ -51,7 +51,7 @@ class MongoFiles:
     async def ensure_indexes(self) -> None:
         collection = self._collection()
         for spec in file_indexes():
-            kwargs: dict = {"unique": spec["unique"]}
+            kwargs: dict = {"unique": spec["unique"], "name": spec["name"]}
             if "partialFilterExpression" in spec:
                 kwargs["partialFilterExpression"] = spec["partialFilterExpression"]
             keys = [

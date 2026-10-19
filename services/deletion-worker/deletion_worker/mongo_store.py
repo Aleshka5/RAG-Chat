@@ -41,7 +41,7 @@ class MongoFileStore:
         self._pages.create_index(
             [("file_id", ASCENDING), ("page_number", ASCENDING)],
             unique=True,
-            name="file_id_page_number_unique",
+            name="file_id_page_number",
         )
 
     def get_file(self, file_id: str) -> FileRecord | None:

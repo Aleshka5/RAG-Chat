@@ -47,11 +47,16 @@ networks:
     name: rag_internal
   rag_edge:
     name: rag_edge
+  llm_network:
+    name: llm_network
+    external: true
 
 services:
   rag-edge:
     build: ./services/rag-edge
     networks: [rag_internal, rag_edge]
+    restart: unless-stopped
+    depends_on: [file-collector, chat, frontend]
     environment:
       RAG_EDGE_PORT: "8080"
       MAX_UPLOAD_BYTES: "524288000"
@@ -62,6 +67,8 @@ services:
   file-collector:
     build: ./services/file-collector
     networks: [rag_internal]
+    restart: unless-stopped
+    depends_on: [mongo, minio, rabbitmq]
     environment:
       FILE_COLLECTOR_PORT: "8081"
       MAX_UPLOAD_BYTES: "524288000"
@@ -75,6 +82,8 @@ services:
   processor:
     build: ./services/processor
     networks: [rag_internal]
+    restart: unless-stopped
+    depends_on: [mongo, minio, qdrant, ocr, embedding, rabbitmq]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -89,6 +98,8 @@ services:
   deletion-worker:
     build: ./services/deletion-worker
     networks: [rag_internal]
+    restart: unless-stopped
+    depends_on: [mongo, minio, qdrant, rabbitmq]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -100,7 +111,9 @@ services:
 
   chat:
     build: ./services/chat
-    networks: [rag_internal]
+    networks: [rag_internal, llm_network]
+    restart: unless-stopped
+    depends_on: [mongo, qdrant, embedding]
     environment:
       CHAT_PORT: "8082"
       MONGODB_URI: mongodb://mongo:27017/rag
@@ -113,18 +126,22 @@ services:
   ocr:
     build: ./services/ocr
     networks: [rag_internal]
+    restart: unless-stopped
 
   embedding:
     build: ./services/embedding
     networks: [rag_internal]
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
     networks: [rag_internal]
+    restart: unless-stopped
 
   minio:
     image: minio/minio
     networks: [rag_internal]
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY}
@@ -134,15 +151,18 @@ services:
   mongo:
     image: mongo:7
     networks: [rag_internal]
+    restart: unless-stopped
     volumes: ["mongo-data:/data/db"]
 
   qdrant:
     image: qdrant/qdrant:v1.13.4
     networks: [rag_internal]
+    restart: unless-stopped
     volumes: ["qdrant-data:/qdrant/storage"]
 
   rabbitmq:
     image: rabbitmq:3-management
+    restart: unless-stopped
     networks: [rag_internal]
     volumes: ["rabbit-data:/var/lib/rabbitmq"]
 

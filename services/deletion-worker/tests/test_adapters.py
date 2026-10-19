@@ -102,7 +102,7 @@ def test_mongo_conditional_filters_and_indexes() -> None:
     ]
     partial = database.files.indexes[-1][1]["partialFilterExpression"]
     assert partial == {"status": {"$in": ["uploaded", "processing", "ready", "error", "deleting"]}}
-    assert database.pages.indexes[0][1]["name"] == "file_id_page_number_unique"
+    assert database.pages.indexes[0][1]["name"] == "file_id_page_number"
     assert database.pages.indexes[0][1]["unique"] is True
 
 
