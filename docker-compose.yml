@@ -55,7 +55,7 @@ services:
       MONGODB_URI: mongodb://mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       OCR_URL: http://ocr:8090
-      OCR_TIMEOUT: ${OCR_TIMEOUT:-360}
+      OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
       EMBEDDING_URL: http://embedding:8091
       RABBITMQ_URL: amqp://rabbit:5672/
       PROCESSOR_CONCURRENCY: "1"
@@ -91,13 +91,12 @@ services:
   ocr:
     build:
       context: ./services/ocr
-      args:
-        LLAMA_BUILD: ${LLAMA_BUILD:-cpu}
+      target: cpu
     networks: [rag_internal]
     restart: unless-stopped
     volumes: ["ocr-model-cache:/var/cache/huggingface"]
     environment:
-      OCR_TIMEOUT: ${OCR_TIMEOUT:-360}
+      OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
       HF_TOKEN: ${HF_TOKEN:-}
 
   embedding:

@@ -1,23 +1,17 @@
 .PHONY: config up up-cpu-only up-gpu down lint test test-common
 
-# CPU and GPU variants of the stand. The llama.cpp variant baked into the ocr
-# image is selected by the compose file, not here:
-#   up / up-cpu-only  -> docker-compose.yml (LLAMA_BUILD=cpu, the default)
-#   up-gpu            -> docker-compose.yml + docker-compose.gpu.yml (LLAMA_BUILD=cuda)
-# See services/ocr/Dockerfile for the two llama.cpp build stages.
+# up / up-cpu-only build the ocr image target `cpu` (docker-compose.yml).
+# up-gpu layers docker-compose.gpu.yml: target `cuda` and the GPU reservation.
+# See services/ocr/Dockerfile.
 
 config:
 	podman compose config
 
-up:
+up up-cpu-only:
 	podman compose up --build -d
 
-# CPU build of the ocr service (default llama.cpp prebuilt binary).
-up-cpu-only:
-	podman compose up --build -d
-
-# GPU build of the ocr service. Requires a GPU + NVIDIA driver on the host; the
-# gpu override file builds the CUDA variant and reserves the device for ocr.
+# Requires a GPU and the NVIDIA driver. The override builds the cuda target
+# and reserves the device for ocr.
 up-gpu:
 	podman compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 
