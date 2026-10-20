@@ -17,6 +17,25 @@
 
 Контейнер `embedding` внутри себя запускает `llama-server` на `127.0.0.1:8092` и FastAPI на 8091. Контейнер `ocr` так же запускает свой `llama-server` на `127.0.0.1:8092` и FastAPI на 8090. В compose каждый из них один сервис, не два. Порт llama-server наружу контейнера не публикуется. У OCR нет потолка по потокам и памяти: llama.cpp занимает ядра, которые есть у процесса.
 
+## GPU для OCR
+
+Вариант llama.cpp в образе `ocr` выбирается переменной `LLAMA_BUILD`:
+
+- `cpu` (по умолчанию) — пин-бинарник b11721. Команды `make up` и `make up-cpu-only` собирают этот вариант.
+- `cuda` — GPU-сборка из локального образа `ghcr.io/ggml-org/llama.cpp:server-cuda12`. Команда `make up-gpu` поднимает переопределение `docker-compose.gpu.yml`, которое собирает cuda-вариант и отдаёт контейнеру `ocr` GPU.
+
+`docker-compose.gpu.yml` — не второй стенд, а слой поверх `docker-compose.yml`; `make up-gpu` передаёт оба файла через `-f`. В cpu-варианте GPU не нужен и в состав стенда он не входит.
+
+Переменные gpu-варианта (в `.env`):
+
+| Переменная | По умолчанию | Смысл |
+|------------|--------------|--------|
+| `LLAMA_BUILD` | `cpu` | `cpu` или `cuda`. `make up-gpu` принудительно ставит `cuda` в переопределении. |
+| `GPU_COUNT` | `all` | Сколько GPU отдаётся контейнеру `ocr`. |
+| `GPU_DEVICE_ID` | `all` | Какие GPU: `all`, число или список. |
+
+CUDA-сборка — Ubuntu 24.04 (GLIBC 2.39), поэтому финальный слой образа — Debian trixie (GLIBC 2.41), а не bookworm. CUDA-библиотеки (`libggml-cuda.so`, `libcudart`) лежат в образе; драйвер (`libcuda`) контейнеру даёт хост через резервирование устройства.
+
 Инфраструктура локального стенда: MinIO, MongoDB 7, Qdrant ≥ 1.11, RabbitMQ 3 с management-плагином.
 
 ## Кто что создаёт при старте
@@ -127,6 +146,12 @@ services:
     build: ./services/ocr
     networks: [rag_internal]
     restart: unless-stopped
+    volumes: ["ocr-model-cache:/var/cache/huggingface"]
+    environment:
+      OCR_PORT: "8090"
+      OCR_MODEL: surya-ocr-2
+      OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
+      HF_TOKEN: ${HF_TOKEN:-}
 
   embedding:
     build: ./services/embedding
@@ -171,6 +196,7 @@ volumes:
   mongo-data:
   qdrant-data:
   rabbit-data:
+  ocr-model-cache:
 ```
 
 Чтобы вызвать File Collector или Chat с хоста без gateway, порт этого сервиса публикуют временно и передают `X-Auth-User-Id`. В состав стенда по умолчанию такая публикация не входит.

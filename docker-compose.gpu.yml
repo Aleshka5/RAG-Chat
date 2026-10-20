@@ -1,0 +1,27 @@
+# GPU override for the ocr service. Layered on the main compose file by
+# `make up-gpu` (podman compose -f docker-compose.yml -f docker-compose.gpu.yml).
+#
+# It does two things to the ocr service:
+#   1. Builds the ocr image with the CUDA llama.cpp variant (LLAMA_BUILD=cuda),
+#      which reuses the local ghcr.io/ggml-org/llama.cpp:server-cuda12 image.
+#   2. Reserves the NVIDIA GPU for the container. The CUDA runtime libs ship in
+#      the image; the driver API (libcuda) is provided by the host through this
+#      device reservation.
+#
+# The main file is left CPU-default, so `make up` / `make up-cpu-only` are
+# unchanged and need no GPU. No mem_limit on purpose: the cuda build uses the
+# whole device and a fixed cap would fight the 65536-token KV cache.
+services:
+  ocr:
+    build:
+      context: ./services/ocr
+      args:
+        LLAMA_BUILD: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE_ID:-all}"]
+              capabilities: [gpu]
+              count: ${GPU_COUNT:-all}
