@@ -19,23 +19,19 @@
 
 ## GPU для OCR
 
-Вариант llama.cpp в образе `ocr` выбирается переменной `LLAMA_BUILD`:
+Образ `ocr` собирается одной из двух целей:
 
-- `cpu` (по умолчанию) — пин-бинарник b11721. Команды `make up` и `make up-cpu-only` собирают этот вариант.
-- `cuda` — GPU-сборка из локального образа `ghcr.io/ggml-org/llama.cpp:server-cuda12`. Команда `make up-gpu` поднимает переопределение `docker-compose.gpu.yml`, которое собирает cuda-вариант и отдаёт контейнеру `ocr` GPU.
+- `cpu` (по умолчанию) — пин-бинарник b11721 на `python:3.12-slim-bookworm`. Команды `make up` и `make up-cpu-only` собирают эту цель. Образ CUDA им не нужен.
+- `cuda` — тот же сервис поверх локального образа `ghcr.io/ggml-org/llama.cpp:server-cuda12` (CUDA 12.8, Ubuntu 24.04). В этом образе уже лежат `llama-server`, библиотеки ggml и runtime CUDA (`libcudart`, `libcublas`). Команда `make up-gpu` поднимает слой `docker-compose.gpu.yml`: цель `cuda` и CDI-устройство GPU.
 
 `docker-compose.gpu.yml` — не второй стенд, а слой поверх `docker-compose.yml`; `make up-gpu` передаёт оба файла через `-f`. В cpu-варианте GPU не нужен и в состав стенда он не входит.
 
-Переменные gpu-варианта (в `.env`):
-
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
-| `LLAMA_BUILD` | `cpu` | `cpu` или `cuda`. `make up-gpu` принудительно ставит `cuda` в переопределении. |
-| `GPU_DEVICE_ID` | `all` | Какой GPU отдаётся контейнеру `ocr`, как имя CDI-устройства: `all`, `0`, `1` или `0,1` (см. `nvidia-ctk cdi list`). |
+| `GPU_DEVICE_ID` | `all` | Имя CDI-устройства: `all`, `0`, `1` или `0,1` (см. `nvidia-ctk cdi list`). |
+| `HF_TOKEN` | нет | Необязательный токен Hugging Face. Пусто — анонимное скачивание. |
 
-CUDA-сборка — Ubuntu 24.04 (GLIBC 2.39), поэтому финальный слой образа — Debian trixie (GLIBC 2.41), а не bookworm. CUDA-библиотеки (`libggml-cuda.so`) лежат в образе; драйвер (`libcuda`) контейнеру даёт хост. `libcudart`, `libcublas` и `libnccl` образ не ждёт — сборка из `server-cuda12` резолвит их динамически (host-драйвер достаточно, toolkit в образе не нужен); `LD_LIBRARY_PATH` при запуске llama-server покрывает и их, если вдруг понадобится.
-
-GPU передаётся контейнеру `ocr` как CDI-устройство `nvidia.com/gpu=...` через `devices:` в `docker-compose.gpu.yml` — так хост его и отдаёт (`nvidia-ctk cdi list`), и так его передаёт эталонный `startup_qwen3.8_image_instance_podman.sh` (`--device nvidia.com/gpu=all`). Путь `deploy.resources.reservations` / nvidia-container-toolkit под podman-compose 1.5.0 не работает: контейнер получает cuda-сборку, но GPU не видит.
+GPU передаётся контейнеру `ocr` как CDI-устройство `nvidia.com/gpu=...` через `devices:` в `docker-compose.gpu.yml`. Так хост его отдаёт (`nvidia-ctk cdi list`), и так его передаёт эталонный `startup_qwen3.8_image_instance_podman.sh` (`--device nvidia.com/gpu=all`). Под podman-compose 1.5.0 путь `deploy.resources.reservations` устройство не подключает. Драйвер (`libcuda`) приходит с хоста; runtime CUDA остаётся в образе `server-cuda12`. Кэш весов — том `ocr-model-cache` на `/var/cache/huggingface`. Процесс пишет в него от пользователя `ocr`.
 
 Инфраструктура локального стенда: MinIO, MongoDB 7, Qdrant ≥ 1.11, RabbitMQ 3 с management-плагином.
 
@@ -111,6 +107,7 @@ services:
       MONGODB_URI: mongodb://mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       OCR_URL: http://ocr:8090
+      OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
       EMBEDDING_URL: http://embedding:8091
       RABBITMQ_URL: amqp://rabbit:5672/
       PROCESSOR_CONCURRENCY: "1"
@@ -144,13 +141,13 @@ services:
       LLM_MODEL: ${LLM_MODEL}
 
   ocr:
-    build: ./services/ocr
+    build:
+      context: ./services/ocr
+      target: cpu
     networks: [rag_internal]
     restart: unless-stopped
     volumes: ["ocr-model-cache:/var/cache/huggingface"]
     environment:
-      OCR_PORT: "8090"
-      OCR_MODEL: surya-ocr-2
       OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
       HF_TOKEN: ${HF_TOKEN:-}
 

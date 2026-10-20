@@ -85,8 +85,8 @@
 | `OCR_MODEL` | `surya-ocr-2` | Surya OCR 2, одна модель на `en` и `ru`. Другое значение не даёт процессу стартовать. |
 | `OCR_TIMEOUT` | `120` | Серверный бюджет разбора одной страницы. |
 | `OCR_LLAMA_URL` | `http://127.0.0.1:8092` | llama-server внутри контейнера. В `rag_internal` этот порт не публикуется. |
-| `LLAMA_BUILD` | `cpu` | Вариант llama.cpp в образе `ocr`: `cpu` (пин b11721) или `cuda`. `make up` / `up-cpu-only` берут `cpu`; `make up-gpu` поднимает переопределение с `cuda`. |
-| `GPU_DEVICE_ID` | `all` | Какой GPU отдаётся контейнеру `ocr` в gpu-варианте, как имя CDI-устройства: `all`, `0`, `1` или `0,1` (см. `nvidia-ctk cdi list`). |
+| `HF_TOKEN` | нет | Необязательный токен Hugging Face для скачивания весов. Пусто — анонимный доступ. |
+| `GPU_DEVICE_ID` | `all` | Имя CDI-устройства для `make up-gpu`: `all`, `0`, `1` или `0,1` (см. `nvidia-ctk cdi list`). Процесс переменную не читает. |
 
 ## Embedding
 
