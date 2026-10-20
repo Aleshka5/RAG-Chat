@@ -3,7 +3,7 @@ import pytest
 
 from chat.embedding import EmbeddingClient
 from chat.errors import DependencyUnavailable, UpstreamFailed, UpstreamTimeout
-from chat.llm import LLMClient
+from chat.llm import LLMClient, ProviderUnavailable
 from chat.textutil import truncate_query
 from chat.vectors import QdrantVectorIndex
 from tests.support import USER_A, make_settings
@@ -41,9 +41,38 @@ async def test_llm_timeout_after_retry():
     transport = ScriptedTransport()
     transport.llm_script.extend([httpx.ReadTimeout("timed out"), httpx.ReadTimeout("timed out")])
     client = LLMClient(settings, transport=transport)
-    with pytest.raises(UpstreamTimeout):
+    with pytest.raises(ProviderUnavailable) as caught:
         _ = [token async for token in client.stream([{"role": "user", "content": "q"}], "req")]
+    assert caught.value.kind == "timeout"
     assert len(transport.llm_requests) == 2
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_llm_timeout_after_token_is_upstream_timeout(monkeypatch):
+    settings = make_settings()
+    transport = ScriptedTransport()
+    body = (
+        'data: {"choices":[{"index":0,"delta":{"content":"токен"},"finish_reason":null}]}\n'
+        'data: {"choices":[{"index":0,"delta":{"content":"ещё"},"finish_reason":null}]}\n'
+    ).encode()
+    transport.llm_script.append(httpx.Response(200, content=body))
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return 0.0
+        return settings.llm_timeout_seconds + 1
+
+    monkeypatch.setattr("chat.llm.time.monotonic", fake_monotonic)
+    client = LLMClient(settings, transport=transport)
+    tokens: list[str] = []
+    with pytest.raises(UpstreamTimeout):
+        async for token in client.stream([{"role": "user", "content": "q"}], "req"):
+            tokens.append(token)
+    assert tokens == ["токен"]
+    assert len(transport.llm_requests) == 1
     await client.close()
 
 

@@ -112,6 +112,7 @@ class MemoryRepository:
                 content=turn.answer,
                 created_at=turn.assistant_created_at,
                 sources=list(turn.sources),
+                finish_reason=turn.finish_reason,
             )
         )
         chat = self.chats[turn.chat_id]

@@ -50,6 +50,7 @@ docs/
 | US-6 | `cursor/embedding-cc69` | `services/embedding` |
 | US-7 | `cursor/chat-cc69` | `services/chat` |
 | US-8 | `cursor/frontend-cc69` | `frontend` |
+| US-9 | `cursor/retrieval-only-2bef` | `services/chat`, `frontend`, нормативные абзацы сценария в `docs/` |
 
 ## Чем пользоваться
 

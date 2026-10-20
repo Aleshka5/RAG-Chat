@@ -11,6 +11,8 @@ export const FILE_ERROR_LABELS: Record<string, string> = {
   processing_attempts_exceeded: "Обработка несколько раз прервалась и не завершилась",
 };
 
+export const RETRIEVAL_ONLY_NOTICE = "Модель недоступна. Показаны найденные фрагменты.";
+
 export const REQUEST_ERROR_LABELS: Record<string, string> = {
   validation_error: "Проверьте введённые данные",
   unauthenticated: "Нужна повторная авторизация",

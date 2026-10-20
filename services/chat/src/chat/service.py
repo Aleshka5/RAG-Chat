@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from chat.config import Settings
 from chat.errors import ChatNotFound, DependencyUnavailable, UpstreamFailed, UpstreamTimeout
+from chat.llm import ProviderUnavailable
 from chat.prompt import PromptSource, build_llm_messages
 from chat.repository import ChatRecord, ChatRepository, FileRecord, MessageRecord, Turn
 from chat.sse import sse
@@ -46,6 +47,7 @@ class AnswerSession:
     request_id: str
     handle: object | None = None
     primed: list[str] = field(default_factory=list)
+    retrieval_only: bool = False
 
 
 class ChatService:
@@ -140,6 +142,13 @@ class ChatService:
                 first = await anext(handle)
             except StopAsyncIteration:
                 first = None
+        except ProviderUnavailable:
+            await handle.aclose()
+            if session.sources:
+                session.retrieval_only = True
+                logger.info("answer fell back to retrieval_only", extra=log_extra)
+                return session
+            raise
         except BaseException:
             await handle.aclose()
             raise
@@ -166,7 +175,10 @@ class ChatService:
                     "sources": payloads,
                 },
             )
-            if handle is None:
+            stored_reason: str | None = None
+            if session.retrieval_only:
+                stored_reason = "retrieval_only"
+            elif handle is None:
                 parts.append(NOT_FOUND)
                 yield sse("delta", {"content": NOT_FOUND})
             else:
@@ -189,9 +201,10 @@ class ChatService:
                     user_created_at=now,
                     assistant_created_at=now + timedelta(milliseconds=1),
                     title=title_from_question(session.content),
+                    finish_reason=stored_reason,
                 )
             )
-            yield sse("done", {"finish_reason": "stop"})
+            yield sse("done", {"finish_reason": stored_reason or "stop"})
         except UpstreamTimeout:
             logger.warning(
                 "llm timed out",
@@ -299,4 +312,6 @@ def message_payload(message: MessageRecord) -> dict[str, object]:
     }
     if message.role == "assistant":
         body["sources"] = message.sources or []
+    if message.finish_reason is not None:
+        body["finish_reason"] = message.finish_reason
     return body

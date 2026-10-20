@@ -18,6 +18,12 @@ class _Fatal(Exception):
     pass
 
 
+class ProviderUnavailable(Exception):
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
 class LLMClient:
     def __init__(
         self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None
@@ -42,12 +48,14 @@ class LLMClient:
                 return
             except _Retryable as exc:
                 last = exc
-                if yielded or attempt == 1:
+                if yielded:
                     self._raise_final(exc)
+                if attempt == 1:
+                    raise ProviderUnavailable(exc.kind) from exc
             except _Fatal as exc:
                 raise UpstreamFailed() from exc
         if last is not None:
-            self._raise_final(last)
+            raise ProviderUnavailable(last.kind) from last
         raise UpstreamFailed()
 
     async def _attempt(self, messages: list[dict[str, str]], request_id: str) -> AsyncIterator[str]:

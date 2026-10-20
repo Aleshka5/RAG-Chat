@@ -11,6 +11,7 @@ export type TurnMessage = {
   pending: boolean;
   saved: boolean;
   failed: boolean;
+  retrievalOnly: boolean;
   errorText?: string;
   retryContent?: string;
 };
@@ -33,6 +34,7 @@ export function fromServerMessage(message: Message): TurnMessage {
     pending: false,
     saved: true,
     failed: false,
+    retrievalOnly: message.finish_reason === "retrieval_only",
   };
 }
 
@@ -48,6 +50,7 @@ export function startTurn(existing: TurnMessage[], content: string, now: string,
         pending: true,
         saved: false,
         failed: false,
+        retrievalOnly: false,
       },
     ],
     tempUserId,
@@ -83,6 +86,7 @@ export function applyStreamEvent(turn: LiveTurn, event: ChatStreamEvent, now: st
           pending: false,
           saved: false,
           failed: false,
+          retrievalOnly: false,
         },
       ],
     };
@@ -100,12 +104,20 @@ export function applyStreamEvent(turn: LiveTurn, event: ChatStreamEvent, now: st
   }
   if (event.type === "done") {
     const ids = new Set([turn.userMessageId, turn.assistantMessageId, turn.tempUserId].filter((id) => id));
+    const retrievalOnly = event.finish_reason === "retrieval_only";
     return {
       ...turn,
       outcome: "saved",
       messages: turn.messages.map((message) =>
         ids.has(message.message_id)
-          ? { ...message, pending: false, saved: true, failed: false, errorText: undefined }
+          ? {
+              ...message,
+              pending: false,
+              saved: true,
+              failed: false,
+              errorText: undefined,
+              retrievalOnly: retrievalOnly && message.message_id === turn.assistantMessageId,
+            }
           : message,
       ),
     };
@@ -134,6 +146,7 @@ export function failTurn(turn: LiveTurn, errorText: string): LiveTurn {
         pending: false,
         saved: false,
         failed: true,
+        retrievalOnly: false,
         errorText: showsError ? errorText : undefined,
         retryContent: showsError ? question : undefined,
       };

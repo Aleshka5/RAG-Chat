@@ -262,6 +262,8 @@ async def test_question_streams_meta_then_delta_then_done_with_page(api):
     assert assistant["role"] == "assistant"
     assert assistant["content"] == "Срок годности"
     assert assistant["sources"] == meta["sources"]
+    assert "finish_reason" not in assistant
+    assert "finish_reason" not in user_message
     assert user_message["message_id"] == meta["user_message_id"]
     assert assistant["message_id"] == meta["assistant_message_id"]
     assert user_message["created_at"] < assistant["created_at"]
@@ -347,6 +349,8 @@ async def test_zero_ready_files_skip_llm_and_return_exact_phrase(api, status):
     detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
     assert detail["messages"][1]["content"] == NOT_FOUND
     assert detail["messages"][1]["sources"] == []
+    assert "finish_reason" not in detail["messages"][0]
+    assert "finish_reason" not in detail["messages"][1]
     assert detail["title"] == "Каков срок годности?"
 
 
@@ -442,12 +446,7 @@ async def test_abort_before_any_success_leaves_the_chat_empty(api):
     client, world = api
     _ready_pair(world)
     created = await _create_chat(client)
-    world.transport.llm_script.extend(
-        [
-            httpx.Response(500, json={"error": "down"}),
-            httpx.Response(500, json={"error": "down"}),
-        ]
-    )
+    world.transport.llm_script.append(httpx.Response(400, json={"error": "bad"}))
     failed = await _ask(client, created["chat_id"], "Не сохраняй")
     assert failed.status_code == 502
     assert failed.json()["error"]["code"] == "upstream_failed"
@@ -455,13 +454,55 @@ async def test_abort_before_any_success_leaves_the_chat_empty(api):
     detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
     assert detail["total_messages"] == 0
     assert detail["title"] == "Новый чат"
-    assert len(world.transport.llm_requests) == 2
+    assert len(world.transport.llm_requests) == 1
 
     ok = await _ask(client, created["chat_id"], "Теперь сохрани")
     assert parse_sse(ok.content)[-1][0] == "done"
     detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
     assert detail["total_messages"] == 2
     assert [message["role"] for message in detail["messages"]] == ["user", "assistant"]
+    assert "finish_reason" not in detail["messages"][1]
+
+
+def _unavailable(kind: str) -> list[object]:
+    if kind == "http_500":
+        return [
+            httpx.Response(500, json={"error": "down"}),
+            httpx.Response(500, json={"error": "down"}),
+        ]
+    if kind == "timeout":
+        return [httpx.ReadTimeout("timed out"), httpx.ReadTimeout("timed out")]
+    return [
+        httpx.Response(429, json={"error": "slow"}),
+        httpx.Response(429, json={"error": "slow"}),
+    ]
+
+
+@pytest.mark.parametrize("kind", ["http_500", "timeout", "http_429"])
+async def test_llm_unavailable_before_token_returns_sources_without_answer(api, kind):
+    client, world = api
+    _ready_pair(world)
+    created = await _create_chat(client)
+    world.transport.llm_script.extend(_unavailable(kind))
+    response = await _ask(client, created["chat_id"], "Каков срок годности?")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = parse_sse(response.content)
+    assert [name for name, _data in events] == ["meta", "done"]
+    assert events[-1][1] == {"finish_reason": "retrieval_only"}
+    meta_sources = events[0][1]["sources"]
+    assert meta_sources
+    detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
+    user_message, assistant = detail["messages"]
+    assert assistant["sources"] == meta_sources
+    assert assistant["content"] == ""
+    assert assistant["finish_reason"] == "retrieval_only"
+    assert "sources" not in user_message
+    assert "finish_reason" not in user_message
+    assert detail["total_messages"] == 2
+    assert detail["title"] != "Новый чат"
+    assert detail["title"] == "Каков срок годности?"
+    assert len(world.transport.llm_requests) == 2
 
 
 async def test_delete_chat_removes_messages_and_keeps_the_file(api):

@@ -73,6 +73,7 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  finish_reason?: "retrieval_only";
   created_at: string;
 };
 
