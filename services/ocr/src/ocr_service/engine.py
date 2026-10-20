@@ -19,9 +19,9 @@ PAGE_PROMPT = (
     "OCR this image to HTML. Each block is a div with data-label and data-bbox "
     "(x0 y0 x1 y1, normalized 0-1000)."
 )
-MAX_NEW_TOKENS = 12288
+MAX_NEW_TOKENS = 24576
 # Image patches plus a full-page completion. Smaller than this truncates the page.
-PAGE_CONTEXT = 32768
+PAGE_CONTEXT = 65536
 IMAGE_MIN_TOKENS = 1024
 
 SKIP_LABELS = frozenset({"Figure", "Image", "Diagram", "Blank-Page"})
