@@ -25,7 +25,7 @@ DEFAULTS: dict[str, str] = {
     "MAX_PROCESS_ATTEMPTS": "8",
     "MIN_EXTRACTED_CHARS": "50",
     "OCR_RENDER_DPI": "300",
-    "OCR_TIMEOUT": "60",
+    "OCR_TIMEOUT": "120",
     "OCR_MAX_ATTEMPTS": "3",
     "EMBEDDING_TIMEOUT": "30",
     "EMBEDDING_BATCH_SIZE": "16",

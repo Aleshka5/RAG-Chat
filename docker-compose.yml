@@ -91,6 +91,8 @@ services:
     build: ./services/ocr
     networks: [rag_internal]
     restart: unless-stopped
+    environment:
+      OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
 
   embedding:
     build: ./services/embedding

@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 MODEL_NAME = "surya-ocr-2"
 DEFAULT_PORT = 8090
-DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_LLAMA_URL = "http://127.0.0.1:8092"
 DEFAULT_LOG_LEVEL = "info"
 LOG_LEVELS = ("debug", "info", "warning", "error")

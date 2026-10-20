@@ -190,7 +190,7 @@ def test_main_loads_engine_before_binding_port(monkeypatch: pytest.MonkeyPatch) 
     assert kwargs["port"] == 8090
     assert isinstance(app.state.engine, SuryaEngine)
     assert app.state.settings.ocr_model == "surya-ocr-2"
-    assert app.state.settings.ocr_timeout == 60
+    assert app.state.settings.ocr_timeout == 120
     text, confidence = app.state.engine.recognize(Image.new("RGB", (32, 32), "white"))
     assert text == "ok"
     assert confidence == 0.5

@@ -14,7 +14,7 @@ def test_defaults_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings.from_env()
     assert settings.ocr_port == 8090
     assert settings.ocr_model == MODEL_NAME
-    assert settings.ocr_timeout == 60
+    assert settings.ocr_timeout == 120
     assert settings.llama_url == "http://127.0.0.1:8092"
     assert settings.log_level == "info"
 
