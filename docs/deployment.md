@@ -31,10 +31,11 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `LLAMA_BUILD` | `cpu` | `cpu` или `cuda`. `make up-gpu` принудительно ставит `cuda` в переопределении. |
-| `GPU_COUNT` | `all` | Сколько GPU отдаётся контейнеру `ocr`. |
-| `GPU_DEVICE_ID` | `all` | Какие GPU: `all`, число или список. |
+| `GPU_DEVICE_ID` | `all` | Какой GPU отдаётся контейнеру `ocr`, как имя CDI-устройства: `all`, `0`, `1` или `0,1` (см. `nvidia-ctk cdi list`). |
 
-CUDA-сборка — Ubuntu 24.04 (GLIBC 2.39), поэтому финальный слой образа — Debian trixie (GLIBC 2.41), а не bookworm. CUDA-библиотеки (`libggml-cuda.so`, `libcudart`) лежат в образе; драйвер (`libcuda`) контейнеру даёт хост через резервирование устройства.
+CUDA-сборка — Ubuntu 24.04 (GLIBC 2.39), поэтому финальный слой образа — Debian trixie (GLIBC 2.41), а не bookworm. CUDA-библиотеки (`libggml-cuda.so`, `libcudart`) лежат в образе; драйвер (`libcuda`) контейнеру даёт хост.
+
+GPU передаётся контейнеру `ocr` как CDI-устройство `nvidia.com/gpu=...` через `devices:` в `docker-compose.gpu.yml` — так хост его и отдаёт (`nvidia-ctk cdi list`), и так его передаёт эталонный `startup_qwen3.8_image_instance_podman.sh` (`--device nvidia.com/gpu=all`). Путь `deploy.resources.reservations` / nvidia-container-toolkit под podman-compose 1.5.0 не работает: контейнер получает cuda-сборку, но GPU не видит.
 
 Инфраструктура локального стенда: MinIO, MongoDB 7, Qdrant ≥ 1.11, RabbitMQ 3 с management-плагином.
 

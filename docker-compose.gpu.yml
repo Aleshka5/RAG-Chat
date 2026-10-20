@@ -4,24 +4,25 @@
 # It does two things to the ocr service:
 #   1. Builds the ocr image with the CUDA llama.cpp variant (LLAMA_BUILD=cuda),
 #      which reuses the local ghcr.io/ggml-org/llama.cpp:server-cuda12 image.
-#   2. Reserves the NVIDIA GPU for the container. The CUDA runtime libs ship in
-#      the image; the driver API (libcuda) is provided by the host through this
-#      device reservation.
+#   2. Hands the NVIDIA GPU to the container.
 #
-# The main file is left CPU-default, so `make up` / `make up-cpu-only` are
-# unchanged and need no GPU. No mem_limit on purpose: the cuda build uses the
-# whole device and a fixed cap would fight the 65536-token KV cache.
+# The GPU is passed as a CDI device (`nvidia.com/gpu=...`), the way this host
+# exposes it (`nvidia-ctk cdi list`), and the way the reference
+# startup_qwen3.8_image_instance_podman.sh does it (`--device
+# nvidia.com/gpu=all`). podman-compose 1.5.0 passes compose `devices:` through
+# to `podman run --device`, which injects the /dev/nvidia* nodes and the host
+# libcuda. The Docker `deploy.resources.reservations` / nvidia-container-toolkit
+# path does NOT work under this podman-compose (it reserves nothing, so the
+# CUDA build runs but sees no GPU), so it is not used here.
+#
+# GPU_DEVICE_ID names the CDI device: all | 0 | 1 | 0,1 (matches
+# nvidia-ctk cdi list). No mem_limit on purpose: the cuda build uses the whole
+# device and a fixed cap would fight the 65536-token KV cache.
 services:
   ocr:
     build:
       context: ./services/ocr
       args:
         LLAMA_BUILD: cuda
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${GPU_DEVICE_ID:-all}"]
-              capabilities: [gpu]
-              count: ${GPU_COUNT:-all}
+    devices:
+      - "nvidia.com/gpu=${GPU_DEVICE_ID:-all}"
