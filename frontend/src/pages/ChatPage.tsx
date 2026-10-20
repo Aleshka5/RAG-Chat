@@ -4,7 +4,7 @@ import { ApiError } from "../api/client";
 import { Markdown } from "../components/Markdown";
 import { SourceCard } from "../components/SourceCard";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/States";
-import { requestErrorLabel } from "../shared/labels";
+import { RETRIEVAL_ONLY_NOTICE, requestErrorLabel } from "../shared/labels";
 import { useChatStore } from "../stores/chatStore";
 import type { TurnMessage } from "../shared/chatTurn";
 
@@ -251,9 +251,10 @@ function MessageView({
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : message.content ? (
           <Markdown text={message.content} />
-        ) : !message.saved && !message.failed ? (
+        ) : !message.saved && !message.failed && !message.retrievalOnly ? (
           <p className="text-muted">…</p>
         ) : null}
+        {message.retrievalOnly ? <p>{RETRIEVAL_ONLY_NOTICE}</p> : null}
         {message.pending ? <p className="mt-1 text-xs text-sheet/80">Отправляется…</p> : null}
         {sources.length > 0 ? (
           <ul className="mt-3 grid gap-2 sm:grid-cols-2">

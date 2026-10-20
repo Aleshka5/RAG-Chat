@@ -263,6 +263,8 @@ paths:
           description: |
             Поток SSE. События разделены пустой строкой.
             Порядок: `meta`, ноль или больше `delta`, затем ровно одно из `done` или `error`.
+            `finish_reason` в `done` — `stop` либо `retrieval_only`.
+            `retrieval_only` значит, что источники есть, текстовых `delta` нет и провайдер LLM был недоступен до первого токена.
 
             ```
             event: meta
@@ -273,6 +275,14 @@ paths:
 
             event: done
             data: {"finish_reason":"stop"}
+            ```
+
+            ```
+            event: meta
+            data: {"chat_id":"...","user_message_id":"...","assistant_message_id":"...","sources":[]}
+
+            event: done
+            data: {"finish_reason":"retrieval_only"}
             ```
 
             `sources` в `meta` совпадает с тем, что будет сохранено у ответа.
@@ -622,6 +632,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Source"
+        finish_reason:
+          type: string
+          enum: [retrieval_only]
+          description: Только у ответа ассистента без текста LLM. У обычного ответа поле отсутствует.
         created_at:
           type: string
           format: date-time

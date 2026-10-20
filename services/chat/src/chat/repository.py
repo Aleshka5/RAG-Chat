@@ -32,6 +32,7 @@ class MessageRecord:
     content: str
     created_at: datetime
     sources: list[dict[str, object]] | None = None
+    finish_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -54,6 +55,7 @@ class Turn:
     user_created_at: datetime
     assistant_created_at: datetime
     title: str
+    finish_reason: str | None = None
 
 
 class ChatRepository(Protocol):
@@ -227,6 +229,8 @@ class MongoChatRepository:
             "sources": turn.sources,
             "created_at": turn.assistant_created_at,
         }
+        if turn.finish_reason == "retrieval_only":
+            assistant_doc["finish_reason"] = "retrieval_only"
         async with self._guard():
             await self._messages.insert_one(user_doc)
             await self._messages.insert_one(assistant_doc)
@@ -260,6 +264,9 @@ class MongoChatRepository:
             sources = None
         elif sources is None:
             sources = []
+        finish_reason = document.get("finish_reason")
+        if document.get("role") != "assistant" or finish_reason != "retrieval_only":
+            finish_reason = None
         return MessageRecord(
             message_id=str(document["message_id"]),
             chat_id=str(document["chat_id"]),
@@ -268,4 +275,5 @@ class MongoChatRepository:
             content=str(document["content"]),
             created_at=_aware(document["created_at"]),
             sources=list(sources) if sources is not None else None,
+            finish_reason=finish_reason,
         )

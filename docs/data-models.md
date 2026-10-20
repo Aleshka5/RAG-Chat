@@ -165,8 +165,9 @@ db.chats.createIndex({ user_id: 1, updated_at: -1 })
 | `chat_id` | string | |
 | `user_id` | string | Тот же UUID владельца, чтобы выбирать сообщения без соединения с чатом. |
 | `role` | string | `user` или `assistant`. |
-| `content` | string | Текст сообщения. |
+| `content` | string | Текст сообщения. У ответа без LLM — пустая строка. |
 | `sources` | array | Только у `assistant`. У `user` поля нет. |
+| `finish_reason` | string или поле отсутствует | Только у `assistant` и только со значением `retrieval_only`: ответ — найденные чанки, текста LLM нет. У обычного ответа и у `user` поля нет. |
 | `created_at` | datetime | У пары одного хода время ответа строго больше времени вопроса. |
 
 Элемент `sources`:

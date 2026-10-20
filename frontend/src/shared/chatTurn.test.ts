@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyStreamEvent, startTurn } from "./chatTurn";
+import { applyStreamEvent, fromServerMessage, startTurn } from "./chatTurn";
 import type { ChatStreamEvent } from "./sse";
 
 const source = {
@@ -40,6 +40,56 @@ describe("chat turn", () => {
     turn = applyStreamEvent(turn, { type: "done", finish_reason: "stop" }, "2026-10-18T20:00:03Z");
     expect(turn.outcome).toBe("saved");
     expect(turn.messages.every((message) => message.saved)).toBe(true);
+    expect(turn.messages.every((message) => message.retrievalOnly === false)).toBe(true);
+  });
+
+  it("saves a retrieval-only turn with empty content and the found sources", () => {
+    let turn = startTurn([], "Каков срок годности?", "2026-10-18T20:00:00Z", "local-1");
+    turn = applyStreamEvent(
+      turn,
+      {
+        type: "meta",
+        chat_id: "chat-1",
+        user_message_id: "user-1",
+        assistant_message_id: "assistant-1",
+        sources: [source],
+      },
+      "2026-10-18T20:00:01Z",
+    );
+    expect(turn.messages[1]).toMatchObject({ content: "", retrievalOnly: false, saved: false, sources: [source] });
+
+    turn = applyStreamEvent(turn, { type: "done", finish_reason: "retrieval_only" }, "2026-10-18T20:00:02Z");
+    expect(turn.outcome).toBe("saved");
+    expect(turn.messages[1]).toMatchObject({
+      content: "",
+      retrievalOnly: true,
+      saved: true,
+      sources: [source],
+    });
+    expect(turn.messages[0].retrievalOnly).toBe(false);
+  });
+
+  it("maps finish_reason from a saved message", () => {
+    const retrieval = fromServerMessage({
+      message_id: "assistant-1",
+      role: "assistant",
+      content: "",
+      sources: [source],
+      finish_reason: "retrieval_only",
+      created_at: "2026-10-18T20:01:02Z",
+    });
+    expect(retrieval.retrievalOnly).toBe(true);
+    expect(retrieval.content).toBe("");
+    expect(retrieval.sources).toEqual([source]);
+
+    const ordinary = fromServerMessage({
+      message_id: "assistant-2",
+      role: "assistant",
+      content: "Не найдено в документах.",
+      sources: [],
+      created_at: "2026-10-18T20:01:03Z",
+    });
+    expect(ordinary.retrievalOnly).toBe(false);
   });
 
   it("marks a broken turn unsaved and keeps the question for retry", () => {
