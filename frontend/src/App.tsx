@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoadingBlock } from "./components/States";
@@ -10,14 +10,23 @@ const PreviewPage = lazy(() => import("./pages/PreviewPage"));
 
 export function App() {
   const blocked = useSessionStore((state) => state.blocked);
+  useEffect(() => {
+    if (!blocked) return;
+    document.title = "Доступ закрыт · Документы · Filenkov";
+  }, [blocked]);
   if (blocked) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-16">
-        <div className="rounded-2xl border border-line bg-sheet px-6 py-8" role="alert">
-          <h1 className="serif text-3xl">Доступ закрыт</h1>
-          <p className="mt-3 text-muted">Запрос не повторяется.</p>
+      <Layout>
+        <div className="auth-page">
+          <div className="panel" role="alert">
+            <div className="stack">
+              <p className="kicker">Документы</p>
+              <h1>Доступ закрыт</h1>
+              <p className="muted">Запрос не повторяется.</p>
+            </div>
+          </div>
         </div>
-      </div>
+      </Layout>
     );
   }
   return (

@@ -11,7 +11,7 @@ const components: Components = {
 
 export function Markdown({ text }: { text: string }) {
   return (
-    <div className="markdown">
+    <div className="prose">
       <ReactMarkdown components={components}>{text}</ReactMarkdown>
     </div>
   );

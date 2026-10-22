@@ -26,6 +26,10 @@ export default function PreviewPage() {
   const documentRef = useRef<PDFDocumentProxy | null>(null);
 
   useEffect(() => {
+    document.title = `${fileName || "Документ"} · Документы · Filenkov`;
+  }, [fileName]);
+
+  useEffect(() => {
     const controller = new AbortController();
     setPhase("loading");
     setErrorText(null);
@@ -138,33 +142,24 @@ export default function PreviewPage() {
   }
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="view-in screen">
+      <div className="page-head">
         <div>
-          <Link className="text-sm text-pine" to="/files">
+          <Link className="up" to="/files">
             К файлам
           </Link>
-          <h1 className="serif mt-1 text-3xl">{fileName || "Документ"}</h1>
+          <p className="kicker">Документы</p>
+          <h1>{fileName || "Документ"}</h1>
         </div>
         {phase === "ready" && numPages != null ? (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-full border border-line bg-sheet px-3 py-1.5 text-sm disabled:opacity-40"
-              disabled={page <= 1}
-              onClick={() => goTo(page - 1)}
-            >
+          <div className="actions">
+            <button type="button" className="btn btn-ghost" disabled={page <= 1} onClick={() => goTo(page - 1)}>
               Назад
             </button>
-            <p className="text-sm">
+            <p className="meta nums">
               стр. {page} из {numPages}
             </p>
-            <button
-              type="button"
-              className="rounded-full border border-line bg-sheet px-3 py-1.5 text-sm disabled:opacity-40"
-              disabled={page >= numPages}
-              onClick={() => goTo(page + 1)}
-            >
+            <button type="button" className="btn btn-ghost" disabled={page >= numPages} onClick={() => goTo(page + 1)}>
               Вперёд
             </button>
           </div>
@@ -173,14 +168,16 @@ export default function PreviewPage() {
 
       {phase === "loading" ? <LoadingBlock label="Открываем PDF…" /> : null}
       {phase === "unavailable" ? (
-        <div className="rounded-2xl border border-line bg-sheet px-5 py-8" role="status">
-          <h2 className="serif text-2xl">Предпросмотр недоступен</h2>
-          <p className="mt-2 text-muted">Файл уже удалён или его нельзя показать.</p>
+        <div className="surface stack" role="status">
+          <h2>Предпросмотр недоступен</h2>
+          <p className="muted">Файл уже удалён или его нельзя показать.</p>
         </div>
       ) : null}
-      {phase === "error" && errorText ? <ErrorBlock text={errorText} onRetry={() => setReloadKey((value) => value + 1)} /> : null}
-      <div ref={frameRef} className={`overflow-auto rounded-2xl border border-line bg-white p-3 ${phase === "ready" ? "" : "hidden"}`}>
-        <canvas ref={canvasRef} className="mx-auto max-w-full" />
+      {phase === "error" && errorText ? (
+        <ErrorBlock text={errorText} onRetry={() => setReloadKey((value) => value + 1)} />
+      ) : null}
+      <div ref={frameRef} className={phase === "ready" ? "sheet-frame" : "sheet-frame is-hidden"}>
+        <canvas ref={canvasRef} />
       </div>
     </section>
   );

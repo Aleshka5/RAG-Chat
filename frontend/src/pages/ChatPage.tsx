@@ -5,8 +5,8 @@ import { Markdown } from "../components/Markdown";
 import { SourceCard } from "../components/SourceCard";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/States";
 import { RETRIEVAL_ONLY_NOTICE, requestErrorLabel } from "../shared/labels";
-import { useChatStore } from "../stores/chatStore";
 import type { TurnMessage } from "../shared/chatTurn";
+import { useChatStore } from "../stores/chatStore";
 
 export function ChatPage() {
   const { chatId } = useParams();
@@ -34,6 +34,11 @@ export function ChatPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const view = chatId ? title || "Чат" : "Чат";
+    document.title = `${view} · Документы · Filenkov`;
+  }, [chatId, title]);
 
   useEffect(() => {
     void loadChats();
@@ -100,75 +105,83 @@ export function ChatPage() {
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-[17rem_minmax(0,1fr)] md:items-start">
-      <aside className="rounded-2xl border border-line bg-sheet p-3">
-        <button
-          type="button"
-          className="w-full rounded-full bg-pine px-3 py-2 text-sm text-sheet"
-          onClick={() => void onCreate()}
-        >
+    <div className="view-in tool-split">
+      <aside className="surface stack">
+        <button type="button" className="btn is-block" onClick={() => void onCreate()}>
           Новый чат
         </button>
-        {createError ? <p className="mt-2 text-sm text-red-900">{createError}</p> : null}
-        <div className="mt-3">
-          {chatsPhase === "loading" ? <LoadingBlock label="Загрузка чатов…" /> : null}
-          {chatsPhase === "error" && chatsError ? <ErrorBlock text={chatsError} onRetry={() => void loadChats()} /> : null}
-          {chatsPhase === "ready" && chats.length === 0 ? (
-            <p className="px-1 py-3 text-sm text-muted">Чатов пока нет.</p>
-          ) : null}
-          <ul className="mt-1 max-h-[28rem] space-y-1 overflow-auto">
-            {chats.map((chat) => {
-              const selected = chat.chat_id === chatId;
-              return (
-                <li key={chat.chat_id} className={`rounded-xl px-2 py-2 ${selected ? "bg-paper" : ""}`}>
-                  <button
-                    type="button"
-                    className="w-full truncate text-left text-sm"
-                    onClick={() => navigate(`/chat/${chat.chat_id}`)}
-                  >
-                    {chat.title}
-                  </button>
-                  {pendingDelete === chat.chat_id ? (
-                    <div className="mt-1 flex gap-2 text-xs">
-                      <button type="button" className="text-red-900" onClick={() => void onDelete(chat.chat_id)}>
-                        Удалить
-                      </button>
-                      <button type="button" onClick={() => setPendingDelete(null)}>
-                        Отмена
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="mt-1 text-xs text-muted"
-                      onClick={() => setPendingDelete(chat.chat_id)}
-                    >
-                      Удалить чат
+        {createError ? (
+          <p className="banner error" role="alert">
+            {createError}
+          </p>
+        ) : null}
+        {chatsPhase === "loading" ? <LoadingBlock label="Загрузка чатов…" /> : null}
+        {chatsPhase === "error" && chatsError ? (
+          <ErrorBlock text={chatsError} onRetry={() => void loadChats()} />
+        ) : null}
+        {chatsPhase === "ready" && chats.length === 0 ? <p className="empty">Чатов пока нет.</p> : null}
+        <ul className="choice-list choice-scroll">
+          {chats.map((chat, index) => {
+            const selected = chat.chat_id === chatId;
+            return (
+              <li key={chat.chat_id} className="choice">
+                <button
+                  type="button"
+                  className="choice-main"
+                  aria-current={selected ? "page" : undefined}
+                  onClick={() => navigate(`/chat/${chat.chat_id}`)}
+                >
+                  <span className="choice-num">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="choice-body">
+                    <span className="choice-title truncate">{chat.title}</span>
+                  </span>
+                  <span className="choice-arrow" aria-hidden="true">
+                    →
+                  </span>
+                </button>
+                {pendingDelete === chat.chat_id ? (
+                  <div className="actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setPendingDelete(null)}>
+                      Отмена
                     </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          {chats.length < totalChats ? (
-            <button type="button" className="mt-2 text-sm text-pine" onClick={() => void loadMoreChats()}>
-              Ещё чаты
-            </button>
-          ) : null}
-        </div>
+                    <button type="button" className="btn btn-danger" onClick={() => void onDelete(chat.chat_id)}>
+                      Удалить
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" className="quiet-action" onClick={() => setPendingDelete(chat.chat_id)}>
+                    Удалить чат
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {chats.length < totalChats ? (
+          <button type="button" className="btn btn-ghost" onClick={() => void loadMoreChats()}>
+            Ещё чаты
+          </button>
+        ) : null}
       </aside>
 
-      <section className="flex min-h-[32rem] flex-col rounded-2xl border border-line bg-sheet">
+      <section className="surface thread-panel">
         {!chatId ? (
-          <div className="p-4">
-            <EmptyBlock title="Чат" text="Выберите чат или создайте новый. История хранится на сервере и открывается после перезагрузки." />
+          <div className="page-pad">
+            <p className="kicker">Документы</p>
+            <h1>Чат</h1>
+            <p className="muted page-lead">
+              Выберите чат или создайте новый. История хранится на сервере и открывается после перезагрузки.
+            </p>
           </div>
         ) : (
           <>
-            <header className="border-b border-line px-4 py-3">
-              <h1 className="serif truncate text-2xl">{title || "Чат"}</h1>
+            <header className="thread-head">
+              <div className="thread-measure">
+                <p className="kicker">Документы</p>
+                <h1 className="truncate">{title || "Чат"}</h1>
+              </div>
             </header>
-            <div ref={threadRef} className="flex-1 space-y-4 overflow-auto px-4 py-4">
+            <div ref={threadRef} className="thread">
               {messagesPhase === "loading" ? <LoadingBlock label="Загрузка сообщений…" /> : null}
               {messagesPhase === "error" && messagesError ? (
                 <ErrorBlock text={messagesError} onRetry={() => void openChat(chatId)} />
@@ -177,53 +190,62 @@ export function ChatPage() {
                 <EmptyBlock title="Пустой чат" text="Задайте вопрос по загруженным документам." />
               ) : null}
               {totalMessages > messages.length && messages.length > 0 ? (
-                <p className="text-center text-xs text-muted">Показаны последние {messages.length} из {totalMessages}.</p>
+                <p className="meta">
+                  Показаны последние {messages.length} из {totalMessages}.
+                </p>
               ) : null}
-              {messages.map((message) => (
-                <MessageView
-                  key={message.message_id}
-                  message={message}
-                  onRetry={(content) => void retry(content)}
-                  retryDisabled={sending}
-                />
-              ))}
+              {messages.length > 0 ? (
+                <div className="thread-measure">
+                  {messages.map((message) => (
+                    <MessageView
+                      key={message.message_id}
+                      message={message}
+                      onRetry={(content) => void retry(content)}
+                      retryDisabled={sending}
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
             <form
-              className="border-t border-line p-3"
+              className="composer"
               onSubmit={(event) => {
                 event.preventDefault();
                 submit();
               }}
             >
-              <label className="sr-only" htmlFor="question">
-                Вопрос
-              </label>
-              <textarea
-                id="question"
-                className="min-h-24 w-full resize-y rounded-xl border border-line bg-paper px-3 py-2"
-                placeholder="Спросите по документам"
-                value={draft}
-                maxLength={8000}
-                disabled={sending || activeId !== chatId}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    submit();
-                  }
-                }}
-              />
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <p className={`text-xs ${tooLong ? "text-red-800" : "text-muted"}`}>
-                  {tooLong ? "Вопрос не длиннее 4000 символов." : trimmed.length >= 3600 ? `${trimmed.length} / 4000` : "Enter — отправить"}
-                </p>
-                <button
-                  type="submit"
-                  className="rounded-full bg-pine px-4 py-2 text-sm text-sheet disabled:opacity-40"
-                  disabled={sending || trimmed.length < 1 || tooLong}
-                >
-                  Спросить
-                </button>
+              <div className="composer-measure stack">
+                <div className="field">
+                  <label htmlFor="question">Вопрос</label>
+                  <textarea
+                    id="question"
+                    placeholder="Спросите по документам"
+                    value={draft}
+                    maxLength={8000}
+                    disabled={sending || activeId !== chatId}
+                    aria-describedby="question-hint"
+                    aria-invalid={tooLong || undefined}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        submit();
+                      }
+                    }}
+                  />
+                </div>
+                <div className="actions">
+                  <p id="question-hint" className={tooLong ? "meta is-danger" : "meta"}>
+                    {tooLong
+                      ? "Вопрос не длиннее 4000 символов."
+                      : trimmed.length >= 3600
+                        ? `${trimmed.length} / 4000`
+                        : "Enter — отправить"}
+                  </p>
+                  <button type="submit" className="btn" disabled={sending || trimmed.length < 1 || tooLong}>
+                    Спросить
+                  </button>
+                </div>
               </div>
             </form>
           </>
@@ -245,19 +267,19 @@ function MessageView({
   const mine = message.role === "user";
   const sources = message.role === "assistant" ? (message.sources ?? []) : [];
   return (
-    <article className={`flex max-w-[42rem] flex-col ${mine ? "ml-auto items-end" : "items-start"}`}>
-      <div className={mine ? "rounded-2xl bg-pine px-3 py-2 text-sheet" : "w-full"}>
+    <article>
+      <div className={mine ? "a-callout" : undefined}>
         {mine ? (
-          <p className="whitespace-pre-wrap">{message.content}</p>
+          <p>{message.content}</p>
         ) : message.content ? (
           <Markdown text={message.content} />
         ) : !message.saved && !message.failed && !message.retrievalOnly ? (
-          <p className="text-muted">…</p>
+          <p className="meta">…</p>
         ) : null}
-        {message.retrievalOnly ? <p>{RETRIEVAL_ONLY_NOTICE}</p> : null}
-        {message.pending ? <p className="mt-1 text-xs text-sheet/80">Отправляется…</p> : null}
+        {message.retrievalOnly ? <p className="banner">{RETRIEVAL_ONLY_NOTICE}</p> : null}
+        {message.pending ? <p className="meta">Отправляется…</p> : null}
         {sources.length > 0 ? (
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          <ul className="source-list">
             {sources.map((source, index) => (
               <li key={`${source.file_id}-${source.page_number}-${source.chunk_index}-${index}`}>
                 <SourceCard source={source} />
@@ -267,11 +289,11 @@ function MessageView({
         ) : null}
       </div>
       {message.errorText ? (
-        <div className="mt-2 text-sm text-red-900" role="alert">
-          <p>{message.errorText}</p>
+        <div role="alert">
+          <p className="banner error">{message.errorText}</p>
           <button
             type="button"
-            className="mt-1 underline disabled:opacity-40"
+            className="btn"
             disabled={retryDisabled}
             onClick={() => onRetry(message.retryContent ?? message.content)}
           >
