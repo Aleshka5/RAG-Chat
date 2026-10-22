@@ -45,11 +45,11 @@ function uploadNotice(error: unknown): Notice {
     const fileId = typeof error.details?.file_id === "string" ? error.details.file_id : undefined;
     return {
       tone: "error",
-      text: requestErrorLabel(error.status, error.code, "Не удалось загрузить файл"),
+      text: requestErrorLabel(error.status, error.code, "Could not upload the file"),
       fileId,
     };
   }
-  return { tone: "error", text: "Не удалось загрузить файл" };
+  return { tone: "error", text: "Could not upload the file" };
 }
 
 export const useFilesStore = create<FilesState>((set, get) => ({
@@ -89,9 +89,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       if (seq !== loadSeq) return;
       if (error instanceof AccessBlockedError || error instanceof AuthRedirectError) return;
       if (get().items.filter((item) => !item.local).length === 0) {
-        set({ phase: "error", errorMessage: "Не удалось загрузить список файлов", pollError: null });
+        set({ phase: "error", errorMessage: "Could not load the file list", pollError: null });
       } else {
-        set({ pollError: "Не удалось обновить список" });
+        set({ pollError: "Could not refresh the list" });
       }
     }
   },
@@ -156,7 +156,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
         set({
           notice: {
             tone: "error",
-            text: requestErrorLabel(error.status, error.code, "Не удалось поставить файл в очередь"),
+            text: requestErrorLabel(error.status, error.code, "Could not queue the file"),
           },
         });
         await get().load({ silent: true });
@@ -168,8 +168,8 @@ export const useFilesStore = create<FilesState>((set, get) => ({
           tone: "error",
           text:
             error instanceof ApiError
-              ? requestErrorLabel(error.status, error.code, "Не удалось удалить файл")
-              : "Не удалось удалить файл",
+              ? requestErrorLabel(error.status, error.code, "Could not delete the file")
+              : "Could not delete the file",
         },
       }));
     }

@@ -33,7 +33,7 @@ describe("FilesPage", () => {
         <FilesPage />
       </MemoryRouter>,
     );
-    expect(await screen.findByText("Не удалось загрузить список файлов")).toBeTruthy();
+    expect(await screen.findByText("Could not load the file list")).toBeTruthy();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/files?limit=50&offset=0");
     first.unmount();
 
@@ -54,7 +54,7 @@ describe("FilesPage", () => {
         <FilesPage />
       </MemoryRouter>,
     );
-    expect(await screen.findByText("Файлов пока нет")).toBeTruthy();
+    expect(await screen.findByText("No files yet")).toBeTruthy();
     second.unmount();
 
     resetFilesStore();
@@ -75,7 +75,7 @@ describe("FilesPage", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText("Отчёт.pdf")).toBeTruthy();
-    expect(screen.getByText("В документе не найден текст")).toBeTruthy();
+    expect(screen.getByText("No text found in the document")).toBeTruthy();
     expect(screen.getByText("—")).toBeTruthy();
   });
 });

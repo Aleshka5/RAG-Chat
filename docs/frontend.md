@@ -2,7 +2,7 @@
 
 Клиент открывает `https://rag.filenkov.store`. Запросы same-origin, cookie `auth_access` уходит сама, если хост покрыт `COOKIE_DOMAIN`. Клиент не ставит `X-Auth-*`, `X-User-Id` и `Authorization`. Эти заголовки пишет Auth Gateway на пути к `rag-edge`.
 
-Ответ `401` с телом gateway `{"error":"unauthorized"}` значит, что сеанса нет. Клиент уводит браузер на `{PUBLIC_ORIGIN}/auth?return_to=` с текущим URL. Конверт RAG `error.code` в этом ответе не разбирается. `403` с `{"error":"blocked"}` или с кодом RAG `forbidden` показывает, что доступ закрыт, и не повторяет запрос.
+Ответ `401` с телом gateway `{"error":"unauthorized"}` значит, что сеанса нет. Клиент уводит браузер на `{PUBLIC_ORIGIN}/auth?return_to=` с текущим URL. Конверт RAG `error.code` в этом ответе не разбирается. `403` с `{"error":"blocked"}` или с кодом RAG `forbidden` показывает «Access denied» и не повторяет запрос.
 
 Клиент собирается Vite. UI — React, Tailwind CSS, Zustand, PDF.js. Другой сборщик не используется. Форму API это не меняет. Сервисы API сами CORS не настраивают: браузер ходит на тот же хост. Локальная проверка без Auth Gateway бьёт во внутренние порты с заголовком `X-Auth-User-Id` и не является формой продакшена.
 
@@ -14,30 +14,30 @@
 
 | `status` | Подпись | Вид |
 |----------|---------|-----|
-| `uploaded` | Загружен | жёлтый |
-| `processing` | Обработка… | синий, со спиннером. Если в карточке есть `progress.pages_total`, подпись «Обработка… {pages_done} из {pages_total}» |
-| `ready` | Готов | зелёный |
-| `error` | Ошибка | красный, подсказка по коду `error` |
-| `deleting` | Удаление… | серый |
+| `uploaded` | Uploaded | жёлтый |
+| `processing` | Processing… | синий, со спиннером. Если в карточке есть `progress.pages_total`, подпись «Processing… {pages_done} of {pages_total}» |
+| `ready` | Ready | зелёный |
+| `error` | Error | красный, подсказка по коду `error` |
+| `deleting` | Deleting… | серый |
 
 Подписи кодов `error`:
 
 | Код | Подпись |
 |-----|---------|
-| `corrupt_pdf` | Файл повреждён или не является PDF |
-| `storage_read_failed` | Не удалось прочитать файл из хранилища |
-| `embedding_failed` | Не удалось построить векторы |
-| `index_write_failed` | Не удалось записать индекс |
-| `metadata_update_failed` | Не удалось сохранить статус |
-| `no_extractable_text` | В документе не найден текст |
-| `enqueue_failed` | Не удалось поставить файл в очередь |
-| `processing_attempts_exceeded` | Обработка несколько раз прервалась и не завершилась |
+| `corrupt_pdf` | The file is damaged or is not a PDF |
+| `storage_read_failed` | Could not read the file from storage |
+| `embedding_failed` | Could not build the vectors |
+| `index_write_failed` | Could not write the index |
+| `metadata_update_failed` | Could not save the status |
+| `no_extractable_text` | No text found in the document |
+| `enqueue_failed` | Could not queue the file |
+| `processing_attempts_exceeded` | Processing stopped several times and did not finish |
 
 Пока в загруженной странице списка есть `uploaded`, `processing` или `deleting`, клиент повторяет `GET /api/files` каждые 5 секунд. Когда таких статусов нет, опрос останавливается. Удаление и загрузка не ждут окончания опроса: они сразу меняют локальный список и затем сверяются с ответом сервера.
 
-Загрузка — выбор файла или перетаскивание, один файл за запрос, `POST /api/files`. Ответ `409 duplicate_file` показывает, что такой документ уже есть. `413` и `415` показываются отдельно от общего сбоя.
+Загрузка — выбор файла или перетаскивание, один файл за запрос, `POST /api/files`. Ответ `409 duplicate_file` показывает «This document already exists». `413` и `415` показываются отдельно от общего сбоя.
 
-Удаление спрашивает подтверждение и вызывает `DELETE`. `409 file_busy` означает, что обработка ещё идёт или удаление уже запущено.
+Удаление спрашивает подтверждение и вызывает `DELETE`. `409 file_busy` показывает «Processing is still in progress or deletion has already started».
 
 ## Чат, маршрут `/chat`
 
@@ -50,12 +50,12 @@
 1. Сразу показать вопрос пользователя как неотправленный до `meta`.
 2. По `meta` запомнить `user_message_id`, `assistant_message_id` и карточки `sources`. Карточки видны до окончания текста.
 3. Склеивать `delta.content` в ответ и рисовать его как Markdown.
-4. По `done` ход считается сохранённым. Если `finish_reason` равен `retrieval_only`, текста ответа нет: над карточками источников постоянная подпись «Модель недоступна. Показаны найденные фрагменты.»
+4. По `done` ход считается сохранённым. Если `finish_reason` равен `retrieval_only`, текста ответа нет: над карточками источников постоянная подпись «The model is unavailable. Showing the passages that were found.»
 5. По `error` или обрыву потока показать ошибку у хода и не считать его сохранённым. Повтор отправляет тот же текст новым запросом.
 
 Та же подпись показывается после `GET`, если у сообщения ассистента `finish_reason` равен `retrieval_only`. Клиент не подставляет текст чанков в тело ответа: фрагменты остаются в карточках.
 
-Карточка источника: имя файла, «стр. N», действие «Открыть». Если пользователь уже удалил файл, `GET /content` вернёт `404`; карточка остаётся, действие показывает, что предпросмотр недоступен.
+Карточка источника: имя файла, «Page N», действие «Open». Если пользователь уже удалил файл, `GET /content` вернёт `404`; карточка остаётся, действие показывает «Preview unavailable».
 
 Пустой ответ модели по контракту может быть фразой «Не найдено в документах.» Клиент не отличает её от обычного текста и не подменяет её своей строкой. Пустой `sources` просто не рисует карточек.
 

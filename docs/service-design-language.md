@@ -4,6 +4,8 @@ This file is the whole visual contract for a Filenkov service. It is written so 
 
 The interface language is English. The color scheme is light. A service ships no dark theme.
 
+Every user-visible UI string is English. Russian text is not used in labels, buttons, headings, empty, error, and loading states, navigation, `aria-label`s, or the document title. `lang` is `en`. The wordmark stays **Filenkov**.
+
 ---
 
 ## 1. What to build
@@ -114,6 +116,8 @@ Body is Public Sans, `--step-0`, line-height `1.65`, letter-spacing `0.01em`, an
 | Big number | Fraunces, `--step-2`, tabular figures, `--accent-text` |
 | Field label and table header | `0.72rem`, weight `600`, letter-spacing `0.12em`, uppercase, `--ink-muted` |
 
+Chat history text is half the size previously used for that list. The history title, the index, and the meta are the only lines this rule changes. Previously those roles used the choice-row sizes: the title `--step-1` (`1.25rem`) and the index and the meta `--step--1` (`0.8125rem`). Half of that is a title at `0.625rem` and an index and a meta at `0.40625rem`. Face, weight, and color stay the choice-row rules in section 10. The message thread, the composer, and the page heading are not reduced by this rule.
+
 ### Space
 
 A 4px scale. Every margin, padding, and gap is one of these.
@@ -148,6 +152,7 @@ Two durations and one curve.
 | Wordmark and service list fading in the condensed header | Opacity over `--dur-fast` |
 | A choice row | A 2px copper bar on the left, `scaleY(0 → 1)` from the top, over `--dur-fast` |
 | A button | Background color over `--dur-fast` |
+| The chat-history delete control | `translateX` on that control only, over `--dur-fast`, from off the right edge of its row into view. The view still enters on Y. The control is not an ancestor of a viewport layer |
 | Anything else | Still |
 
 ---
@@ -187,7 +192,7 @@ Two durations and one curve.
 </html>
 ```
 
-The title form is `<view> · <service> · Filenkov`. Replace `Storage` in the footer with the service name.
+The title form is `<view> · <service> · Filenkov`. Replace `Storage` in the footer with the service name. The title is English. `lang` on the root element is `en`.
 
 Landmarks, in order: skip link, `header`, `main`, `footer`. The skip link is the first focusable control. It is hidden above the viewport and slides into place on `:focus-visible`. One `h1` per view. When a view change replaces the `h1`, move focus to that heading (`tabindex="-1"`) and write the title into a visually hidden live region:
 
@@ -346,7 +351,7 @@ Save this as `/header.js`:
 
 | Width | Change |
 |---|---|
-| `1080px` and below | A side column, if the screen has one, drops before the page stacks |
+| `1080px` and below | A side column, if the screen has one, drops before the page stacks. Chat history does not. From `760px` upward it stays a column beside the thread. See section 15 |
 | `760px` and below | Main and header padding become `--s4`. Header gap becomes `--s4`. On a choice row, the meta wraps under the title |
 | `620px` and below | The wordmark hides. The diamond still names the product. The service list gap becomes `--s3`, and the list scrolls horizontally with the scrollbar hidden |
 
@@ -737,6 +742,12 @@ A sibling list under a row, when the screen has one, is a wrap of muted links, w
 <a class="up" href="/folders">Up</a>
 ```
 
+### Deleting a chat
+
+The chat history list is a choice list. Its title, index, and meta use the half sizes in section 3. The rest of the row does not.
+
+Deleting a chat: the control is not stacked under the history row. It sits on the right edge of that row, off-canvas until the pointer is over that row, then slides into view. The control is inside the row, so the pointer can move onto the control without it dismissing. `:focus-within` reveals it, and the control stays in tab order so the focus ring is on screen. On a coarse pointer (`pointer: coarse`), a tap on the row reveals that row's control. That tap does not itself choose the chat. Confirmation behavior already defined for destructive actions stays: the dialog in section 7, with the same scrim, Escape, ghost Cancel, and danger confirm.
+
 ---
 
 ## 11. Focus and targets
@@ -770,7 +781,9 @@ A service looks like the others when every line is true.
 7. Loading, empty, and error copy are specific sentences. A skeleton waits 120ms.
 8. At 620px the wordmark is gone and the service list still scrolls. At 760px the page padding is `--s4`, a dense table is a stack of records, and the document itself does not scroll sideways. See section 15.
 9. `prefers-reduced-motion` collapses the two durations. A keyboard walk shows the focus ring on every stop.
-10. `lang` is `en`, `color-scheme` is `light`, the faces are the self-hosted files, and the tab icon is the diamond below.
+10. `lang` is `en`, `color-scheme` is `light`, the faces are the self-hosted files, and the tab icon is the diamond below. Every user-visible UI string is English, including labels, buttons, headings, empty, error, and loading states, navigation, `aria-label`s, and the document title. The wordmark is Filenkov.
+11. Chat history title, index, and meta are half the choice-row sizes in section 3. The message thread, the composer, and the page heading are not. The delete control sits on the right edge of the history row and slides into view. It is not stacked under the row. Confirmation is still the dialog in section 7.
+12. Below 760px the chat thread fills the viewport and chat history is the hideable left sidebar in section 15. From 760px upward, history is a visible column beside the thread.
 
 ---
 
@@ -1853,7 +1866,7 @@ Look at every view at `1280px` and at `390px` wide. The document itself does not
 | Width | What changes |
 |---|---|
 | `1080px` and below | A storage side nav becomes one horizontal strip under the header. Labels stay visible, the strip scrolls, and the collapse control is hidden. The usage line sits under that strip, full width. |
-| `760px` and below | Page and footer padding are `--s4`. The page head stacks, title above actions. Filters wrap, and the search field takes the full row. A pager’s action pair stretches across the row. Card grids are one column. |
+| `760px` and below | Page and footer padding are `--s4`. The page head stacks, title above actions. Filters wrap, and the search field takes the full row. A pager’s action pair stretches across the row. Card grids are one column. The chat thread fills the viewport, and chat history becomes the hideable sidebar below |
 | `620px` and below | The wordmark is hidden. The service list scrolls inside the header. |
 
 ### Dense tables on a phone
@@ -1878,6 +1891,10 @@ Use the stack when the table has more than four columns. A table of three column
   </table>
 </div>
 ```
+
+### Chat
+
+Below `760px` the chat thread fills the viewport. Chat history is a hideable left sidebar, opened by a visible control and closed by a close control, Escape, the scrim, or choosing a chat. The scrim is the same ink-at-28% dismiss as a confirm dialog. From `760px` upward, history is a visible column beside the thread, not a block stacked above it. The `1080px` side-column break does not stack this column.
 
 ### What stays large
 

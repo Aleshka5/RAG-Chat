@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { Markdown } from "../components/Markdown";
@@ -7,6 +8,26 @@ import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/States";
 import { RETRIEVAL_ONLY_NOTICE, requestErrorLabel } from "../shared/labels";
 import type { TurnMessage } from "../shared/chatTurn";
 import { useChatStore } from "../stores/chatStore";
+
+function mediaMatches(query: string): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia(query).matches;
+}
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => mediaMatches(query));
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(query);
+    const onChange = () => setMatches(media.matches);
+    onChange();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [query]);
+
+  return matches;
+}
 
 export function ChatPage() {
   const { chatId } = useParams();
@@ -33,11 +54,16 @@ export function ChatPage() {
   const [draft, setDraft] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [armedId, setArmedId] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const compact = useMediaQuery("(max-width: 759px)");
+  const coarse = useMediaQuery("(pointer: coarse)");
 
   useEffect(() => {
-    const view = chatId ? title || "Чат" : "Чат";
-    document.title = `${view} · Документы · Filenkov`;
+    const view = chatId ? title || "Chat" : "Chat";
+    document.title = `${view} · Documents · Filenkov`;
   }, [chatId, title]);
 
   useEffect(() => {
@@ -66,34 +92,73 @@ export function ChatPage() {
     node.scrollTop = node.scrollHeight;
   }, [messages, sending]);
 
+  useEffect(() => {
+    if (!historyOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setHistoryOpen(false);
+      setArmedId(null);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [historyOpen]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape" || deleting) return;
+      event.stopImmediatePropagation();
+      setPendingDelete(null);
+    }
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [pendingDelete, deleting]);
+
   const trimmed = draft.trim();
   const tooLong = trimmed.length > 4000;
+
+  function closeHistory() {
+    setHistoryOpen(false);
+    setArmedId(null);
+  }
+
+  function openListedChat(id: string) {
+    closeHistory();
+    navigate(`/chat/${id}`);
+  }
 
   async function onCreate() {
     setCreateError(null);
     try {
       const id = await create();
+      closeHistory();
       navigate(`/chat/${id}`);
     } catch (error) {
       if (error instanceof ApiError) {
-        setCreateError(requestErrorLabel(error.status, error.code, "Не удалось создать чат"));
+        setCreateError(requestErrorLabel(error.status, error.code, "Could not create chat"));
       } else {
-        setCreateError("Не удалось создать чат");
+        setCreateError("Could not create chat");
       }
     }
   }
 
   async function onDelete(id: string) {
+    setDeleting(true);
     try {
       await remove(id);
       setPendingDelete(null);
-      if (chatId === id) navigate("/chat");
+      if (chatId === id) {
+        closeHistory();
+        navigate("/chat");
+      }
     } catch (error) {
       if (error instanceof ApiError) {
-        setCreateError(requestErrorLabel(error.status, error.code, "Не удалось удалить чат"));
+        setCreateError(requestErrorLabel(error.status, error.code, "Could not delete chat"));
       } else {
-        setCreateError("Не удалось удалить чат");
+        setCreateError("Could not delete chat");
       }
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -104,32 +169,56 @@ export function ChatPage() {
     void send(text);
   }
 
-  return (
-    <div className="view-in tool-split">
-      <aside className="surface stack">
+  const historyHidden = compact && !historyOpen;
+  const pendingChat = chats.find((chat) => chat.chat_id === pendingDelete) ?? null;
+
+  const history = (
+    <>
+      {historyOpen ? (
+        <button type="button" className="chat-history-scrim" aria-label="Close" onClick={closeHistory} />
+      ) : null}
+      <aside
+        id="chat-history"
+        className={`surface stack chat-history${historyOpen ? " is-open" : ""}`}
+        aria-label="Chats"
+        aria-hidden={historyHidden ? true : undefined}
+        inert={historyHidden ? true : undefined}
+      >
+        <div className="chat-history-tools">
+          <button type="button" className="btn btn-ghost" onClick={closeHistory}>
+            Close
+          </button>
+        </div>
         <button type="button" className="btn is-block" onClick={() => void onCreate()}>
-          Новый чат
+          New chat
         </button>
         {createError ? (
           <p className="banner error" role="alert">
             {createError}
           </p>
         ) : null}
-        {chatsPhase === "loading" ? <LoadingBlock label="Загрузка чатов…" /> : null}
+        {chatsPhase === "loading" ? <LoadingBlock label="Loading chats…" /> : null}
         {chatsPhase === "error" && chatsError ? (
           <ErrorBlock text={chatsError} onRetry={() => void loadChats()} />
         ) : null}
-        {chatsPhase === "ready" && chats.length === 0 ? <p className="empty">Чатов пока нет.</p> : null}
+        {chatsPhase === "ready" && chats.length === 0 ? <p className="empty">No chats yet.</p> : null}
         <ul className="choice-list choice-scroll">
           {chats.map((chat, index) => {
             const selected = chat.chat_id === chatId;
+            const armed = coarse && armedId === chat.chat_id;
             return (
-              <li key={chat.chat_id} className="choice">
+              <li key={chat.chat_id} className={`choice chat-row${armed ? " is-armed" : ""}`}>
                 <button
                   type="button"
                   className="choice-main"
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => navigate(`/chat/${chat.chat_id}`)}
+                  onClick={() => {
+                    if (coarse && armedId !== chat.chat_id) {
+                      setArmedId(chat.chat_id);
+                      return;
+                    }
+                    openListedChat(chat.chat_id);
+                  }}
                 >
                   <span className="choice-num">{String(index + 1).padStart(2, "0")}</span>
                   <span className="choice-body">
@@ -139,18 +228,9 @@ export function ChatPage() {
                     →
                   </span>
                 </button>
-                {pendingDelete === chat.chat_id ? (
-                  <div className="actions">
-                    <button type="button" className="btn btn-ghost" onClick={() => setPendingDelete(null)}>
-                      Отмена
-                    </button>
-                    <button type="button" className="btn btn-danger" onClick={() => void onDelete(chat.chat_id)}>
-                      Удалить
-                    </button>
-                  </div>
-                ) : (
-                  <button type="button" className="quiet-action" onClick={() => setPendingDelete(chat.chat_id)}>
-                    Удалить чат
+                {pendingDelete === chat.chat_id ? null : (
+                  <button type="button" className="chat-row-delete" onClick={() => setPendingDelete(chat.chat_id)}>
+                    Delete chat
                   </button>
                 )}
               </li>
@@ -159,39 +239,54 @@ export function ChatPage() {
         </ul>
         {chats.length < totalChats ? (
           <button type="button" className="btn btn-ghost" onClick={() => void loadMoreChats()}>
-            Ещё чаты
+            Load more
           </button>
         ) : null}
       </aside>
+    </>
+  );
+
+  return (
+    <div className="view-in chat-layout">
+      <button
+        type="button"
+        className="btn chat-history-open"
+        aria-expanded={historyOpen}
+        aria-controls="chat-history"
+        onClick={() => setHistoryOpen(true)}
+      >
+        Chats
+      </button>
+      {compact ? createPortal(history, document.body) : history}
 
       <section className="surface thread-panel">
         {!chatId ? (
           <div className="page-pad">
-            <p className="kicker">Документы</p>
-            <h1>Чат</h1>
+            <p className="kicker">Documents</p>
+            <h1>Chat</h1>
             <p className="muted page-lead">
-              Выберите чат или создайте новый. История хранится на сервере и открывается после перезагрузки.
+              Choose a chat or start a new one. History is stored on the server and opens after a reload.
             </p>
           </div>
         ) : (
           <>
             <header className="thread-head">
               <div className="thread-measure">
-                <p className="kicker">Документы</p>
-                <h1 className="truncate">{title || "Чат"}</h1>
+                <p className="kicker">Documents</p>
+                <h1 className="truncate">{title || "Chat"}</h1>
               </div>
             </header>
             <div ref={threadRef} className="thread">
-              {messagesPhase === "loading" ? <LoadingBlock label="Загрузка сообщений…" /> : null}
+              {messagesPhase === "loading" ? <LoadingBlock label="Loading messages…" /> : null}
               {messagesPhase === "error" && messagesError ? (
                 <ErrorBlock text={messagesError} onRetry={() => void openChat(chatId)} />
               ) : null}
               {messagesPhase === "ready" && messages.length === 0 ? (
-                <EmptyBlock title="Пустой чат" text="Задайте вопрос по загруженным документам." />
+                <EmptyBlock title="Empty chat" text="Ask a question about the uploaded documents." />
               ) : null}
               {totalMessages > messages.length && messages.length > 0 ? (
                 <p className="meta">
-                  Показаны последние {messages.length} из {totalMessages}.
+                  Showing the latest {messages.length} of {totalMessages}.
                 </p>
               ) : null}
               {messages.length > 0 ? (
@@ -216,10 +311,10 @@ export function ChatPage() {
             >
               <div className="composer-measure stack">
                 <div className="field">
-                  <label htmlFor="question">Вопрос</label>
+                  <label htmlFor="question">Question</label>
                   <textarea
                     id="question"
-                    placeholder="Спросите по документам"
+                    placeholder="Ask about the documents"
                     value={draft}
                     maxLength={8000}
                     disabled={sending || activeId !== chatId}
@@ -237,13 +332,13 @@ export function ChatPage() {
                 <div className="actions">
                   <p id="question-hint" className={tooLong ? "meta is-danger" : "meta"}>
                     {tooLong
-                      ? "Вопрос не длиннее 4000 символов."
+                      ? "Question must be 4000 characters or fewer."
                       : trimmed.length >= 3600
                         ? `${trimmed.length} / 4000`
-                        : "Enter — отправить"}
+                        : "Enter to send"}
                   </p>
                   <button type="submit" className="btn" disabled={sending || trimmed.length < 1 || tooLong}>
-                    Спросить
+                    Ask
                   </button>
                 </div>
               </div>
@@ -251,6 +346,55 @@ export function ChatPage() {
           </>
         )}
       </section>
+      {pendingChat
+        ? createPortal(
+            <DeleteChatDialog
+              title={pendingChat.title}
+              busy={deleting}
+              onCancel={() => setPendingDelete(null)}
+              onConfirm={() => void onDelete(pendingChat.chat_id)}
+            />,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
+
+function DeleteChatDialog({
+  title,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, []);
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="delete-chat-title">
+      <button type="button" className="overlay-dismiss" aria-label="Close" onClick={onCancel} disabled={busy} />
+      <div className="panel">
+        <h2 id="delete-chat-title" ref={titleRef} tabIndex={-1}>
+          Delete chat?
+        </h2>
+        <div className="stack">
+          <p>{title} will be permanently deleted.</p>
+          <div className="actions">
+            <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={busy}>
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -277,7 +421,7 @@ function MessageView({
           <p className="meta">…</p>
         ) : null}
         {message.retrievalOnly ? <p className="banner">{RETRIEVAL_ONLY_NOTICE}</p> : null}
-        {message.pending ? <p className="meta">Отправляется…</p> : null}
+        {message.pending ? <p className="meta">Sending…</p> : null}
         {sources.length > 0 ? (
           <ul className="source-list">
             {sources.map((source, index) => (
@@ -297,7 +441,7 @@ function MessageView({
             disabled={retryDisabled}
             onClick={() => onRetry(message.retryContent ?? message.content)}
           >
-            Повторить
+            Retry
           </button>
         </div>
       ) : null}

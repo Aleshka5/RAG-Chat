@@ -25,8 +25,8 @@ describe("SourceCard", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("Отчёт.pdf")).toBeTruthy();
-    expect(screen.getByText("стр. 5")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Открыть" }).getAttribute("href")).toBe(
+    expect(screen.getByText("Page 5")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open" }).getAttribute("href")).toBe(
       "/files/6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f?page=5",
     );
   });
@@ -39,7 +39,7 @@ describe("SourceCard", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("Отчёт.pdf")).toBeTruthy();
-    expect(screen.getByText("Предпросмотр недоступен")).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Открыть" })).toBeNull();
+    expect(screen.getByText("Preview unavailable")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open" })).toBeNull();
   });
 });

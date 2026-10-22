@@ -21,7 +21,7 @@ export function ErrorBlock({ text, onRetry }: { text: string; onRetry?: () => vo
       <p>{text}</p>
       {onRetry ? (
         <button type="button" className="btn" onClick={onRetry}>
-          Повторить
+          Retry
         </button>
       ) : null}
     </div>

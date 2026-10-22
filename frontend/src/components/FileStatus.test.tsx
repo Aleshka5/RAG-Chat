@@ -13,8 +13,8 @@ describe("FileStatus", () => {
         }}
       />,
     );
-    expect(screen.getByText("Ошибка")).toBeTruthy();
-    expect(screen.getByText("Файл повреждён или не является PDF")).toBeTruthy();
+    expect(screen.getByText("Error")).toBeTruthy();
+    expect(screen.getByText("The file is damaged or is not a PDF")).toBeTruthy();
   });
 
   it("renders processing progress with a spinner label", () => {
@@ -27,6 +27,6 @@ describe("FileStatus", () => {
         }}
       />,
     );
-    expect(screen.getByText("Обработка… 2 из 10")).toBeTruthy();
+    expect(screen.getByText("Processing… 2 of 10")).toBeTruthy();
   });
 });
