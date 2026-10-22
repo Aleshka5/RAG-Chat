@@ -1,42 +1,42 @@
 import type { FileProgress, FileStatus } from "../types";
 
 export const FILE_ERROR_LABELS: Record<string, string> = {
-  corrupt_pdf: "Файл повреждён или не является PDF",
-  storage_read_failed: "Не удалось прочитать файл из хранилища",
-  embedding_failed: "Не удалось построить векторы",
-  index_write_failed: "Не удалось записать индекс",
-  metadata_update_failed: "Не удалось сохранить статус",
-  no_extractable_text: "В документе не найден текст",
-  enqueue_failed: "Не удалось поставить файл в очередь",
-  processing_attempts_exceeded: "Обработка несколько раз прервалась и не завершилась",
+  corrupt_pdf: "The file is damaged or is not a PDF",
+  storage_read_failed: "Could not read the file from storage",
+  embedding_failed: "Could not build the vectors",
+  index_write_failed: "Could not write the index",
+  metadata_update_failed: "Could not save the status",
+  no_extractable_text: "No text found in the document",
+  enqueue_failed: "Could not queue the file",
+  processing_attempts_exceeded: "Processing stopped several times and did not finish",
 };
 
-export const RETRIEVAL_ONLY_NOTICE = "Модель недоступна. Показаны найденные фрагменты.";
+export const RETRIEVAL_ONLY_NOTICE = "The model is unavailable. Showing the passages that were found.";
 
 export const REQUEST_ERROR_LABELS: Record<string, string> = {
-  validation_error: "Проверьте введённые данные",
-  unauthenticated: "Нужна повторная авторизация",
-  forbidden: "Доступ закрыт",
-  blocked: "Доступ закрыт",
-  unauthorized: "Нужна повторная авторизация",
-  file_not_found: "Файл не найден",
-  chat_not_found: "Чат не найден",
-  duplicate_file: "Такой документ уже есть",
-  file_busy: "Обработка ещё идёт или удаление уже запущено",
-  file_too_large: "Файл больше допустимого размера",
-  unsupported_media_type: "Это не PDF",
+  validation_error: "Check the values you entered",
+  unauthenticated: "Sign in again",
+  forbidden: "Access denied",
+  blocked: "Access denied",
+  unauthorized: "Sign in again",
+  file_not_found: "File not found",
+  chat_not_found: "Chat not found",
+  duplicate_file: "This document already exists",
+  file_busy: "Processing is still in progress or deletion has already started",
+  file_too_large: "The file is larger than the allowed size",
+  unsupported_media_type: "This is not a PDF",
   enqueue_failed: FILE_ERROR_LABELS.enqueue_failed,
-  upstream_failed: "Сервис ответа временно недоступен",
-  dependency_unavailable: "Сервис временно недоступен",
-  upstream_timeout: "Ответ не успел прийти",
+  upstream_failed: "The answer service is temporarily unavailable",
+  dependency_unavailable: "The service is temporarily unavailable",
+  upstream_timeout: "The answer did not arrive in time",
 };
 
 export const STATUS_LABELS: Record<FileStatus, string> = {
-  uploaded: "Загружен",
-  processing: "Обработка…",
-  ready: "Готов",
-  error: "Ошибка",
-  deleting: "Удаление…",
+  uploaded: "Uploaded",
+  processing: "Processing…",
+  ready: "Ready",
+  error: "Error",
+  deleting: "Deleting…",
 };
 
 export function fileErrorLabel(code: string | null | undefined): string | null {
@@ -51,14 +51,14 @@ export function requestErrorLabel(status: number, code: string, fallback: string
   if (code === "file_busy") return REQUEST_ERROR_LABELS.file_busy;
   if (code && FILE_ERROR_LABELS[code]) return FILE_ERROR_LABELS[code];
   if (code && REQUEST_ERROR_LABELS[code]) return REQUEST_ERROR_LABELS[code];
-  if (status === 409) return "Запрос сейчас нельзя выполнить";
+  if (status === 409) return "This request cannot be completed right now";
   return fallback;
 }
 
 export function streamErrorLabel(code: string): string {
   if (code && FILE_ERROR_LABELS[code]) return FILE_ERROR_LABELS[code];
   if (code && REQUEST_ERROR_LABELS[code]) return REQUEST_ERROR_LABELS[code];
-  return "Не удалось получить ответ";
+  return "Could not get an answer";
 }
 
 export type StatusTone = "yellow" | "blue" | "green" | "red" | "gray";
@@ -77,12 +77,12 @@ export function statusPresentation(file: {
   local?: boolean;
 }): StatusPresentation {
   if (file.local) {
-    return { label: "Загрузка…", tone: "yellow", spinner: true, hint: null };
+    return { label: "Uploading…", tone: "yellow", spinner: true, hint: null };
   }
   if (file.status === "processing") {
     const label =
       file.progress && file.progress.pages_total != null
-        ? `Обработка… ${file.progress.pages_done} из ${file.progress.pages_total}`
+        ? `Processing… ${file.progress.pages_done} of ${file.progress.pages_total}`
         : STATUS_LABELS.processing;
     return { label, tone: "blue", spinner: true, hint: null };
   }

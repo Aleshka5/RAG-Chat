@@ -26,7 +26,7 @@ export function FilesPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = "Файлы · Документы · Filenkov";
+    document.title = "Files · Documents · Filenkov";
   }, []);
 
   useEffect(() => {
@@ -62,11 +62,11 @@ export function FilesPage() {
       <div>
         <div className="page-head">
           <div>
-            <p className="kicker">Документы</p>
-            <h1>Файлы</h1>
+            <p className="kicker">Documents</p>
+            <h1>Files</h1>
           </div>
         </div>
-        <p className="muted page-lead">PDF загружается по одному запросу и обрабатывается в фоне.</p>
+        <p className="muted page-lead">Each PDF is uploaded in one request and processed in the background.</p>
       </div>
 
       <label
@@ -82,8 +82,8 @@ export function FilesPage() {
           void acceptFiles(event.dataTransfer.files);
         }}
       >
-        <span className="dropzone-title">Перетащите PDF сюда</span>
-        <span className="dropzone-hint">или выберите файл на диске</span>
+        <span className="dropzone-title">Drop a PDF here</span>
+        <span className="dropzone-hint">or choose a file from disk</span>
         <input
           className="sr-only"
           type="file"
@@ -95,7 +95,7 @@ export function FilesPage() {
             event.target.value = "";
           }}
         />
-        <span className="btn">Выбрать PDF</span>
+        <span className="btn">Choose PDF</span>
       </label>
 
       {notice ? (
@@ -103,7 +103,7 @@ export function FilesPage() {
           <p>{notice.text}</p>
           {notice.fileId ? (
             <Link className="link" to={`/files/${notice.fileId}?page=1`}>
-              Открыть существующий
+              Open existing
             </Link>
           ) : null}
         </div>
@@ -114,14 +114,14 @@ export function FilesPage() {
         </div>
       ) : null}
 
-      {phase === "loading" ? <LoadingBlock label="Загрузка списка…" /> : null}
+      {phase === "loading" ? <LoadingBlock label="Loading list…" /> : null}
       {phase === "error" && errorMessage ? (
         <ErrorBlock text={errorMessage} onRetry={() => void load()} />
       ) : null}
       {phase === "ready" && items.length === 0 ? (
         <EmptyBlock
-          title="Файлов пока нет"
-          text="Загрузите PDF — после обработки по нему можно будет задать вопрос."
+          title="No files yet"
+          text="Upload a PDF. After it is processed, you can ask a question about it."
         />
       ) : null}
 
@@ -130,12 +130,12 @@ export function FilesPage() {
           <table>
             <thead>
               <tr>
-                <th>Имя</th>
-                <th>Размер</th>
-                <th>Статус</th>
-                <th>Страницы</th>
-                <th>Загружен</th>
-                <th>Действия</th>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Status</th>
+                <th>Pages</th>
+                <th>Uploaded</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -150,7 +150,7 @@ export function FilesPage() {
       {total > limit ? (
         <div className="pager meta">
           <p className="muted">
-            Показаны {rangeStart}–{rangeEnd} из {total}
+            Showing {rangeStart}–{rangeEnd} of {total}
           </p>
           <div className="actions">
             <button
@@ -159,7 +159,7 @@ export function FilesPage() {
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - limit))}
             >
-              Назад
+              Back
             </button>
             <button
               type="button"
@@ -167,7 +167,7 @@ export function FilesPage() {
               disabled={offset + limit >= total}
               onClick={() => setOffset(offset + limit)}
             >
-              Дальше
+              Next
             </button>
           </div>
         </div>
@@ -197,17 +197,17 @@ function DeleteFileDialog({ onCancel, onConfirm }: { onCancel: () => void; onCon
   }, []);
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="delete-file-title">
-      <button type="button" className="overlay-dismiss" aria-label="Нет" onClick={onCancel} />
+      <button type="button" className="overlay-dismiss" aria-label="No" onClick={onCancel} />
       <div className="panel">
         <h2 id="delete-file-title" ref={titleRef} tabIndex={-1}>
-          Удалить?
+          Delete?
         </h2>
         <div className="actions">
           <button type="button" className="btn btn-ghost" onClick={onCancel}>
-            Нет
+            No
           </button>
           <button type="button" className="btn btn-danger" onClick={onConfirm}>
-            Да
+            Yes
           </button>
         </div>
       </div>
@@ -219,7 +219,7 @@ function FileRow({ file, onAskDelete }: { file: FileCard; onAskDelete: () => voi
   const canOpen = !file.local && file.status !== "deleting";
   return (
     <tr>
-      <td className="cell-wrap" data-label="Имя">
+      <td className="cell-wrap" data-label="Name">
         {canOpen ? (
           <Link className="link" to={`/files/${file.file_id}?page=1`}>
             {file.file_name}
@@ -228,23 +228,23 @@ function FileRow({ file, onAskDelete }: { file: FileCard; onAskDelete: () => voi
           <span className="file-name">{file.file_name}</span>
         )}
       </td>
-      <td className="nums muted" data-label="Размер">
+      <td className="nums muted" data-label="Size">
         {formatBytes(file.file_size)}
       </td>
-      <td className="cell-wrap" data-label="Статус">
+      <td className="cell-wrap" data-label="Status">
         <FileStatus file={file} />
       </td>
-      <td className="nums" data-label="Страницы">
+      <td className="nums" data-label="Pages">
         {formatPageCount(file.page_count)}
       </td>
-      <td className="muted" data-label="Загружен">
+      <td className="muted" data-label="Uploaded">
         {formatDateTime(file.created_at)}
       </td>
-      <td data-label="Действия">
+      <td data-label="Actions">
         <div className="actions">
           {file.local || file.status === "deleting" ? null : (
             <button type="button" className="btn btn-danger" onClick={onAskDelete}>
-              Удалить
+              Delete
             </button>
           )}
         </div>

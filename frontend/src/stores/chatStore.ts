@@ -46,9 +46,9 @@ function stopStream(): void {
 
 function messageErrorText(error: unknown): string {
   if (error instanceof ApiError) {
-    return requestErrorLabel(error.status, error.code, "Не удалось отправить вопрос");
+    return requestErrorLabel(error.status, error.code, "Could not send the question");
   }
-  return "Ответ прервался и не был сохранён.";
+  return "The answer was interrupted and was not saved.";
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -77,7 +77,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       if (error instanceof AccessBlockedError || error instanceof AuthRedirectError) return;
       if (get().chats.length === 0) {
-        set({ chatsPhase: "error", chatsError: "Не удалось загрузить чаты" });
+        set({ chatsPhase: "error", chatsError: "Could not load chats" });
       }
     }
   },
@@ -94,7 +94,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     } catch (error) {
       if (error instanceof AccessBlockedError || error instanceof AuthRedirectError) return;
-      set({ chatsError: "Не удалось загрузить остальные чаты" });
+      set({ chatsError: "Could not load the remaining chats" });
     }
   },
   openChat: async (chatId) => {
@@ -123,8 +123,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (error instanceof AccessBlockedError || error instanceof AuthRedirectError) return;
       const text =
         error instanceof ApiError && (error.status === 404 || error.code === "chat_not_found")
-          ? "Чат не найден"
-          : "Не удалось загрузить сообщения";
+          ? "Chat not found"
+          : "Could not load messages";
       set({ messagesPhase: "error", messagesError: text, messages: [] });
     }
   },

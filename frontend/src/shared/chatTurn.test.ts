@@ -108,7 +108,7 @@ describe("chat turn", () => {
     turn = applyStreamEvent(turn, { type: "error", code: "upstream_timeout", message: "LLM timed out" }, "2026-10-18T20:00:02Z");
     expect(turn.outcome).toBe("failed");
     expect(turn.messages.every((message) => message.saved === false)).toBe(true);
-    expect(turn.messages[1].errorText).toBe("Ответ не успел прийти");
+    expect(turn.messages[1].errorText).toBe("The answer did not arrive in time");
     expect(turn.messages[1].retryContent).toBe("Повтори");
     expect(turn.messages[1].sources).toEqual([]);
   });

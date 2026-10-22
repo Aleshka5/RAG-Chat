@@ -26,7 +26,7 @@ export default function PreviewPage() {
   const documentRef = useRef<PDFDocumentProxy | null>(null);
 
   useEffect(() => {
-    document.title = `${fileName || "Документ"} · Документы · Filenkov`;
+    document.title = `${fileName || "Document"} · Documents · Filenkov`;
   }, [fileName]);
 
   useEffect(() => {
@@ -70,8 +70,8 @@ export default function PreviewPage() {
         if (error instanceof AccessBlockedError || error instanceof AuthRedirectError) return;
         const text =
           error instanceof ApiError
-            ? requestErrorLabel(error.status, error.code, "Не удалось открыть документ")
-            : "Не удалось открыть документ";
+            ? requestErrorLabel(error.status, error.code, "Could not open the document")
+            : "Could not open the document";
         setErrorText(text);
         setPhase("error");
       }
@@ -122,7 +122,7 @@ export default function PreviewPage() {
         })
         .catch((error: unknown) => {
           if (cancelled || current !== generation || error instanceof RenderingCancelledException) return;
-          setErrorText("Не удалось показать страницу");
+          setErrorText("Could not show the page");
           setPhase("error");
         });
     };
@@ -146,31 +146,31 @@ export default function PreviewPage() {
       <div className="page-head">
         <div>
           <Link className="up" to="/files">
-            К файлам
+            Back to files
           </Link>
-          <p className="kicker">Документы</p>
-          <h1>{fileName || "Документ"}</h1>
+          <p className="kicker">Documents</p>
+          <h1>{fileName || "Document"}</h1>
         </div>
         {phase === "ready" && numPages != null ? (
           <div className="actions">
             <button type="button" className="btn btn-ghost" disabled={page <= 1} onClick={() => goTo(page - 1)}>
-              Назад
+              Back
             </button>
             <p className="meta nums">
-              стр. {page} из {numPages}
+              Page {page} of {numPages}
             </p>
             <button type="button" className="btn btn-ghost" disabled={page >= numPages} onClick={() => goTo(page + 1)}>
-              Вперёд
+              Next
             </button>
           </div>
         ) : null}
       </div>
 
-      {phase === "loading" ? <LoadingBlock label="Открываем PDF…" /> : null}
+      {phase === "loading" ? <LoadingBlock label="Opening PDF…" /> : null}
       {phase === "unavailable" ? (
         <div className="surface stack" role="status">
-          <h2>Предпросмотр недоступен</h2>
-          <p className="muted">Файл уже удалён или его нельзя показать.</p>
+          <h2>Preview unavailable</h2>
+          <p className="muted">The file has already been deleted or cannot be shown.</p>
         </div>
       ) : null}
       {phase === "error" && errorText ? (

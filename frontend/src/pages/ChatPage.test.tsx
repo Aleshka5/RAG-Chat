@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetChatStore } from "../stores/chatStore";
@@ -62,7 +62,7 @@ describe("ChatPage", () => {
 
     expect(await screen.findByText("Каков срок годности?")).toBeTruthy();
     expect(screen.getByText("Не найдено в документах.")).toBeTruthy();
-    expect(screen.queryByText("Модель недоступна. Показаны найденные фрагменты.")).toBeNull();
+    expect(screen.queryByText("The model is unavailable. Showing the passages that were found.")).toBeNull();
     expect(fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/api/chats"))).toBe(true);
     expect(localStorage.setItem).not.toHaveBeenCalled();
   });
@@ -121,7 +121,7 @@ describe("ChatPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("Модель недоступна. Показаны найденные фрагменты.")).toBeTruthy();
+    expect(await screen.findByText("The model is unavailable. Showing the passages that were found.")).toBeTruthy();
     expect(screen.getByText(snippet)).toBeTruthy();
     expect(screen.queryByText("…")).toBeNull();
     loaded.unmount();
@@ -164,7 +164,7 @@ describe("ChatPage", () => {
     );
 
     expect(await screen.findByText("Обычный ответ.")).toBeTruthy();
-    expect(screen.queryByText("Модель недоступна. Показаны найденные фрагменты.")).toBeNull();
+    expect(screen.queryByText("The model is unavailable. Showing the passages that were found.")).toBeNull();
   });
 
   it("shows the empty and error states", async () => {
@@ -181,8 +181,14 @@ describe("ChatPage", () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText("Не удалось загрузить чаты")).toBeTruthy();
-    expect(screen.getByText("Выберите чат или создайте новый. История хранится на сервере и открывается после перезагрузки.")).toBeTruthy();
+    expect(await screen.findByText("Could not load chats")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(
+      screen.getByText("Choose a chat or start a new one. History is stored on the server and opens after a reload."),
+    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Chat" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Chats" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
     failed.unmount();
 
     resetChatStore();
@@ -197,6 +203,118 @@ describe("ChatPage", () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText("Чатов пока нет.")).toBeTruthy();
+    expect(await screen.findByText("No chats yet.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeTruthy();
+  });
+
+  it("confirms before deleting and closes the history sidebar", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (url.startsWith("/api/chats?")) {
+        return Response.json({ items: [chat], limit: 50, offset: 0, total: 1 });
+      }
+      if (url.startsWith(`/api/chats/${chat.chat_id}`)) {
+        return Response.json({
+          ...chat,
+          messages: [],
+          limit: 200,
+          offset: 0,
+          total_messages: 0,
+        });
+      }
+      throw new Error(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={[`/chat/${chat.chat_id}`]}>
+        <Routes>
+          <Route path="/chat" element={<ChatPage />} />
+          <Route path="/chat/:chatId" element={<ChatPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Delete chat" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeTruthy();
+    expect(screen.getByLabelText("Question")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Ask about the documents")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    const history = document.getElementById("chat-history");
+    expect(history?.className).toContain("is-open");
+    expect(screen.getAllByRole("button", { name: "Close" }).length).toBe(2);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(history?.className).not.toContain("is-open");
+
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    fireEvent.click(document.querySelector(".chat-history-scrim") as HTMLButtonElement);
+    expect(history?.className).not.toContain("is-open");
+
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    fireEvent.click(screen.getByRole("button", { name: /Каков срок годности/ }));
+    expect(history?.className).not.toContain("is-open");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
+    expect(fetchMock.mock.calls.some((call) => (call[1] as RequestInit | undefined)?.method === "DELETE")).toBe(false);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((call) => (call[1] as RequestInit | undefined)?.method === "DELETE")).toBe(
+        true,
+      );
+    });
+  });
+
+  it("reveals one row delete control when the pointer is coarse", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {
+        return false;
+      },
+    }));
+    const other = {
+      ...chat,
+      chat_id: "c7e1a2c4-1111-4222-8333-444455556667",
+      title: "Другой чат",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = String(input);
+        if (url.startsWith("/api/chats?")) {
+          return Response.json({ items: [chat, other], limit: 50, offset: 0, total: 2 });
+        }
+        if (url.startsWith(`/api/chats/${chat.chat_id}`)) {
+          return Response.json({ ...chat, messages: [], limit: 200, offset: 0, total_messages: 0 });
+        }
+        throw new Error(url);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={[`/chat/${chat.chat_id}`]}>
+        <Routes>
+          <Route path="/chat/:chatId" element={<ChatPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const first = await screen.findByRole("button", { name: /Каков срок годности/ });
+    const second = screen.getByRole("button", { name: /Другой чат/ });
+    fireEvent.click(first);
+    expect(first.closest("li")?.classList.contains("is-armed")).toBe(true);
+    expect(second.closest("li")?.classList.contains("is-armed")).toBe(false);
+    expect(first.getAttribute("aria-current")).toBe("page");
+    fireEvent.click(second);
+    expect(first.closest("li")?.classList.contains("is-armed")).toBe(false);
+    expect(second.closest("li")?.classList.contains("is-armed")).toBe(true);
+    expect(second.getAttribute("aria-current")).toBeNull();
   });
 });

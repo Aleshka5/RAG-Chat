@@ -78,7 +78,7 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="shell">
       <a className="skip-link" href="#main">
-        К содержанию
+        Skip to content
       </a>
       <p id="route-announcer" className="sr-only" aria-live="polite" />
       <header className="header">
@@ -94,17 +94,17 @@ export function Layout({ children }: { children: ReactNode }) {
           </svg>
           <span className="brand-name">Filenkov</span>
         </a>
-        <nav className="service-nav" aria-label="Разделы">
-          <NavLink to="/files">Файлы</NavLink>
-          <NavLink to="/chat">Чат</NavLink>
+        <nav className="service-nav" aria-label="Sections">
+          <NavLink to="/files">Files</NavLink>
+          <NavLink to="/chat">Chat</NavLink>
         </nav>
       </header>
       <main className="main" id="main" tabIndex={-1}>
         {children}
       </main>
       <footer className="footer">
-        <span>Filenkov · Документы</span>
-        <span>Вход через Google · cookie httpOnly на .filenkov.store</span>
+        <span>Filenkov · Documents</span>
+        <span>Sign in with Google · httpOnly cookie on .filenkov.store</span>
       </footer>
     </div>
   );
