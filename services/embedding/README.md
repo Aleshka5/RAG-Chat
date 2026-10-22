@@ -40,7 +40,10 @@
 | `EMBEDDING_MAX_TOKENS` | `1024` |
 | `EMBEDDING_BATCH_SIZE` | `16` |
 | `EMBEDDING_TIMEOUT` | `30` |
+| `EMBEDDING_LLAMA_NGL` | `999` |
 | `LOG_LEVEL` | `info` |
+
+`EMBEDDING_LLAMA_NGL` уходит в `llama-server` как `-ngl`: сколько слоёв модели считать на GPU. `999` (по умолчанию) — все слои, `-1` — то же самое в терминах llama.cpp, `0` — только CPU. Допустимый диапазон `-1..999`, иное значение не даёт процессу стартовать. На CPU-сборке образа флаг ничего не меняет: бинарник без CUDA его игнорирует.
 
 `EMBEDDING_LLAMA_URL` остаётся на `127.0.0.1` или `localhost`. Неверное значение не даёт процессу стартовать: в лог пишется имя переменной, без значения. `EMBEDDING_CONTEXT`, `--batch-size` и `--ubatch-size` одинаковые. `--parallel` у llama-server равен 1. Бюджет памяти контейнера — около 2 ГиБ.
 
@@ -56,11 +59,16 @@ uv run ruff format --check
 uv run pytest
 ```
 
-Образ собирается Podman из `Containerfile` (тот же текст, что `Dockerfile`):
+Образ собирается Podman из `Containerfile` (тот же текст, что `Dockerfile`). В файле два target'а: `cpu` (он же `default`, сборка без `--target`) и `cuda`:
 
 ```bash
+# CPU, по умолчанию
 podman build -f services/embedding/Containerfile -t embedding services/embedding
+# GPU: тот же сервис на ghcr.io/ggml-org/llama.cpp:server-cuda12
+podman build -f services/embedding/Containerfile --target cuda -t embedding:gpu services/embedding
 ```
+
+В `cuda`-сборке `llama-server` и библиотеки ggml из `/app` базового образа переносятся в `/opt/llama` (там же остаются `libcudart` и `libcublas` из CUDA runtime), `LLAMA_ARG_HOST`/`LLAMA_ARG_PORT` перекрываются на `127.0.0.1:8092`, Python ставится системный (`UV_PYTHON=python3`). Слои на GPU задаёт `EMBEDDING_LLAMA_NGL`.
 
 В образе два процесса: `llama-server` только на `127.0.0.1:8092` и `python -m embedding` на 8091. Порт 8092 наружу не открывается, порт 8091 на хост compose не публикует. Первый запрос не ждёт загрузки весов: она заканчивается до готовности `/health`.
 

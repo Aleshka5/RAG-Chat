@@ -12,9 +12,12 @@ from embedding.constants import (
     DEFAULT_LLAMA_URL,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_NGL,
     DEFAULT_PORT,
     DEFAULT_TIMEOUT_SECONDS,
     MODEL_ID,
+    NGL_MAXIMUM,
+    NGL_MINIMUM,
 )
 from embedding.errors import ConfigError
 
@@ -30,6 +33,7 @@ class Settings:
     llama_url: str
     llama_host: str
     llama_port: int
+    ngl: int
     context: int
     dimension: int
     max_tokens: int
@@ -48,6 +52,7 @@ class Settings:
             "EMBEDDING_LLAMA_URL",
             DEFAULT_LLAMA_URL,
         )
+        ngl = _ngl(source, "EMBEDDING_LLAMA_NGL", DEFAULT_NGL)
         context = _positive_int(source, "EMBEDDING_CONTEXT", DEFAULT_CONTEXT)
         dimension = _positive_int(source, "EMBEDDING_DIM", DEFAULT_DIMENSION)
         max_tokens = _positive_int(source, "EMBEDDING_MAX_TOKENS", DEFAULT_MAX_TOKENS)
@@ -63,6 +68,7 @@ class Settings:
             llama_url=llama_url,
             llama_host=llama_host,
             llama_port=llama_port,
+            ngl=ngl,
             context=context,
             dimension=dimension,
             max_tokens=max_tokens,
@@ -113,6 +119,23 @@ def _positive_int(
         except ValueError as exc:
             raise ConfigError(name) from exc
     if value < 1 or (maximum is not None and value > maximum):
+        raise ConfigError(name)
+    return value
+
+
+def _ngl(env: Mapping[str, str], name: str, default: int) -> int:
+    """GPU layers. Unlike the other integers, -1 is valid and means "all layers"."""
+    raw = _raw(env, name)
+    if raw is None:
+        value = default
+    else:
+        if raw.strip() == "":
+            raise ConfigError(name)
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ConfigError(name) from exc
+    if value < NGL_MINIMUM or value > NGL_MAXIMUM:
         raise ConfigError(name)
     return value
 

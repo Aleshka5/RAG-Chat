@@ -11,6 +11,9 @@ MODEL_NAME = "surya-ocr-2"
 DEFAULT_PORT = 8090
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_LLAMA_URL = "http://127.0.0.1:8092"
+DEFAULT_LLAMA_NGL = 999
+MIN_LLAMA_NGL = -1
+MAX_LLAMA_NGL = 999
 DEFAULT_LOG_LEVEL = "info"
 LOG_LEVELS = ("debug", "info", "warning", "error")
 
@@ -32,6 +35,7 @@ class Settings:
     ocr_model: str = MODEL_NAME
     ocr_timeout: float = DEFAULT_TIMEOUT_SECONDS
     llama_url: str = DEFAULT_LLAMA_URL
+    ngl: int = DEFAULT_LLAMA_NGL
     log_level: str = DEFAULT_LOG_LEVEL
 
     @classmethod
@@ -41,6 +45,7 @@ class Settings:
             ocr_model=_model(os.environ.get("OCR_MODEL")),
             ocr_timeout=_timeout(os.environ.get("OCR_TIMEOUT")),
             llama_url=_llama_url(os.environ.get("OCR_LLAMA_URL")),
+            ngl=_ngl(os.environ.get("OCR_LLAMA_NGL")),
             log_level=_log_level(os.environ.get("LOG_LEVEL")),
         )
 
@@ -105,6 +110,22 @@ def _llama_url(raw: str | None) -> str:
     if parsed.path not in {"", "/"}:
         raise ConfigError("OCR_LLAMA_URL")
     return value.rstrip("/")
+
+
+def _ngl(raw: str | None) -> int:
+    """llama.cpp -ngl: -1 = every layer on the GPU, 0 = CPU only, N = partial offload."""
+    value = _present(raw)
+    if value is None:
+        return DEFAULT_LLAMA_NGL
+    if value == "":
+        raise ConfigError("OCR_LLAMA_NGL")
+    try:
+        ngl = int(value)
+    except ValueError:
+        raise ConfigError("OCR_LLAMA_NGL") from None
+    if ngl < MIN_LLAMA_NGL or ngl > MAX_LLAMA_NGL:
+        raise ConfigError("OCR_LLAMA_NGL")
+    return ngl
 
 
 def _log_level(raw: str | None) -> str:

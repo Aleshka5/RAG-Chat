@@ -36,6 +36,8 @@ def test_llama_command_matches_the_text_only_contract() -> None:
     )
     assert command[command.index("--host") + 1] == "127.0.0.1"
     assert command[command.index("--port") + 1] == "8092"
+    assert command[command.index("-ngl") + 1] == "999"
+    assert command.count("-ngl") == 1
     assert command[command.index("--model") + 1].endswith("embeddinggemma-2-Q8_0.gguf")
     assert "--embeddings" in command
     assert command[command.index("--pooling") + 1] == "mean"
@@ -50,6 +52,24 @@ def test_llama_command_matches_the_text_only_contract() -> None:
     assert "F16" not in joined
     assert "safetensors" not in joined
     assert "mmproj-" not in joined
+
+
+def test_llama_command_passes_the_configured_gpu_layers() -> None:
+    settings = Settings.from_env({"EMBEDDING_LLAMA_NGL": "0"})
+    command = build_llama_server_command(
+        settings,
+        Path("/models/embeddinggemma-2-Q8_0.gguf"),
+        "llama-server",
+    )
+    assert command[command.index("-ngl") + 1] == "0"
+
+    all_layers = Settings.from_env({"EMBEDDING_LLAMA_NGL": "-1"})
+    command = build_llama_server_command(
+        all_layers,
+        Path("/models/embeddinggemma-2-Q8_0.gguf"),
+        "llama-server",
+    )
+    assert command[command.index("-ngl") + 1] == "-1"
 
 
 def test_weight_downloads_use_the_pinned_revisions(

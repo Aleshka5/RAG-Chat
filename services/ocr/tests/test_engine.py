@@ -142,6 +142,7 @@ def test_llama_command_does_not_cap_threads_or_memory() -> None:
         mmproj_path=Path("surya-2-mmproj.gguf"),
         host="127.0.0.1",
         port=8092,
+        ngl=999,
     )
     flags = set(command)
     assert "--threads" not in flags
@@ -157,8 +158,28 @@ def test_llama_command_does_not_cap_threads_or_memory() -> None:
     assert command[command.index("--reasoning") + 1] == "off"
 
 
+@pytest.mark.parametrize(("ngl", "expected"), [(0, "0"), (999, "999")])
+def test_llama_command_passes_gpu_layers(ngl: int, expected: str) -> None:
+    command = build_llama_server_command(
+        binary="llama-server",
+        model_path=Path("surya-2.gguf"),
+        mmproj_path=Path("surya-2-mmproj.gguf"),
+        host="127.0.0.1",
+        port=8092,
+        ngl=ngl,
+    )
+    assert command[command.index("-ngl") + 1] == expected
+
+
 def test_main_loads_engine_before_binding_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("OCR_PORT", "OCR_MODEL", "OCR_TIMEOUT", "OCR_LLAMA_URL", "LOG_LEVEL"):
+    for name in (
+        "OCR_PORT",
+        "OCR_MODEL",
+        "OCR_TIMEOUT",
+        "OCR_LLAMA_URL",
+        "OCR_LLAMA_NGL",
+        "LOG_LEVEL",
+    ):
         monkeypatch.delenv(name, raising=False)
     started: dict[str, object] = {}
 

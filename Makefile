@@ -1,19 +1,17 @@
-.PHONY: config up up-cpu-only up-gpu down lint test test-common
+.PHONY: config up down lint test test-common
 
-# up / up-cpu-only build the ocr image target `cpu` (docker-compose.yml).
-# up-gpu layers docker-compose.gpu.yml: target `cuda` and the GPU reservation.
-# See services/ocr/Dockerfile.
+# This stack starts the RAG services only. OCR, embedding, LLM and image
+# generation are owned by Switch-Service in the shared network models_network
+# (Switch-Service/docs/models-network.md): there is no compose CPU/GPU switch
+# here. The ocr/embedding images are built once with the `cuda` target and the
+# running mode is chosen by OCR_LLAMA_NGL / EMBEDDING_LLAMA_NGL in the
+# Switch-Service catalog, not by a make target.
 
 config:
 	podman compose config
 
-up up-cpu-only:
+up:
 	podman compose up --build -d
-
-# Requires a GPU and the NVIDIA driver. The override builds the cuda target
-# and reserves the device for ocr.
-up-gpu:
-	podman compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 
 down:
 	podman compose down

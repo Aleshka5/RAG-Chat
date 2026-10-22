@@ -22,6 +22,13 @@ DEFAULT_BATCH_SIZE = 16
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_LOG_LEVEL = "info"
 
+# Layers offloaded to the GPU. 999 exceeds any real layer count, so llama.cpp
+# keeps every layer on the accelerator; -1 means the same thing upstream.
+# The value is passed to llama-server as `-ngl` and is inert without a GPU build.
+DEFAULT_NGL = 999
+NGL_MINIMUM = -1
+NGL_MAXIMUM = 999
+
 # llama.cpp b11721 is the first release train that contains gemma-embedding2
 # (PR 30054, merged 2026-10-06) and is current for this service image.
 LLAMA_CPP_VERSION = "b11721"

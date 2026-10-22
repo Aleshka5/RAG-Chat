@@ -174,6 +174,7 @@ def start_reader(settings: Settings) -> LlamaReader:
         mmproj_path=mmproj_path,
         host=host,
         port=port,
+        ngl=settings.ngl,
     )
     logger.info("starting llama-server")
     process = subprocess.Popen(command)
@@ -194,6 +195,7 @@ def build_llama_server_command(
     mmproj_path: Path,
     host: str,
     port: int,
+    ngl: int,
 ) -> list[str]:
     """Flags Surya needs. No thread count and no memory ceiling."""
     return [
@@ -218,7 +220,7 @@ def build_llama_server_command(
         "--cache-ram",
         "-1",
         "-ngl",
-        "999",
+        str(ngl),
     ]
 
 

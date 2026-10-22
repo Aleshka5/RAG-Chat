@@ -1,28 +1,13 @@
-# GPU override for the ocr service. Layered on the main compose file by
-# `make up-gpu` (podman compose -f docker-compose.yml -f docker-compose.gpu.yml).
+# GPU is no longer a compose override.
 #
-# It does two things to the ocr service:
-#   1. Builds the cuda target, which installs the service on the local
-#      ghcr.io/ggml-org/llama.cpp:server-cuda12 image.
-#   2. Hands the NVIDIA GPU to the container.
+# OCR and the embedder are not part of this stack any more: Switch-Service owns
+# their containers in the shared podman network models_network
+# (Switch-Service/docs/models-network.md). The image is built once with the
+# `cuda` target; whether llama.cpp puts layers on the GPU is decided per service
+# by OCR_LLAMA_NGL / EMBEDDING_LLAMA_NGL in the Switch-Service catalog, and the
+# CDI device (nvidia.com/gpu=all) is passed by Switch-Service, not by a compose
+# `devices:` stanza.
 #
-# The GPU is passed as a CDI device (`nvidia.com/gpu=...`), the way this host
-# exposes it (`nvidia-ctk cdi list`), and the way the reference
-# startup_qwen3.8_image_instance_podman.sh does it (`--device
-# nvidia.com/gpu=all`). podman-compose 1.5.0 passes compose `devices:` through
-# to `podman run --device`, which injects the /dev/nvidia* nodes and the host
-# libcuda. The Docker `deploy.resources.reservations` path does not work under
-# this podman-compose: the CUDA build runs, but the container sees no GPU.
-#
-# GPU_DEVICE_ID names the CDI device: all | 0 | 1 | 0,1 (matches
-# nvidia-ctk cdi list). No mem_limit on purpose: the cuda build uses the whole
-# device and a fixed cap would fight the 65536-token KV cache.
-# The main file stays on the cpu target, so `make up` / `make up-cpu-only`
-# do not need a GPU.
-services:
-  ocr:
-    build:
-      context: ./services/ocr
-      target: cuda
-    devices:
-      - "nvidia.com/gpu=${GPU_DEVICE_ID:-all}"
+# This file is kept as an empty overlay so an old
+# `-f docker-compose.gpu.yml` invocation parses and changes nothing.
+services: {}

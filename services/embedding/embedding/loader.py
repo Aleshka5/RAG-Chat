@@ -81,6 +81,10 @@ def build_llama_server_command(settings: Settings, model_path: Path, binary: str
         settings.llama_host,
         "--port",
         str(settings.llama_port),
+        # 999 = every layer on the GPU (-1 is the upstream synonym); a CPU-only
+        # build ignores the flag, so the same argv serves both image targets.
+        "-ngl",
+        str(settings.ngl),
         "--model",
         str(model_path),
         "--embeddings",

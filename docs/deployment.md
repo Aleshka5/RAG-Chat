@@ -9,31 +9,29 @@
 | `processor` | нет | consumer |
 | `deletion-worker` | нет | consumer |
 | `chat` | 8082 | HTTP |
-| `ocr` | 8090 | внутренний HTTP |
-| `embedding` | 8091 | внутренний HTTP |
+| `ocr` | 8090 | внутренний HTTP, в `models_network` под Switch-Service |
+| `embedding` | 8091 | внутренний HTTP, в `models_network` под Switch-Service |
 | `frontend` | 3000 | статический UI |
 
-Код всех этих образов лежит в одном репозитории. Стенд запускается Podman: `podman compose -f docker-compose.yml` из корня репозитория, вход через `make up`. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
+Код всех этих образов лежит в одном репозитории, но владельцев у контейнеров два. RAG-стек запускается Podman: `podman compose -f docker-compose.yml` из корня репозитория, вход через `make up`; в нём только `rag-edge`, `file-collector`, `processor`, `deletion-worker`, `chat`, `frontend`, Mongo и Qdrant. OCR, embedding, LLM и генерация изображений в этот compose не входят: их контейнеры создаёт и держит Switch-Service в общей сети `models_network` (см. `Switch-Service/docs/models-network.md`). Второго владельца у них нет намеренно — иначе reconciler Switch-Service и `podman compose up` перетирали бы состояние друг друга. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
 
-Контейнер `embedding` внутри себя запускает `llama-server` на `127.0.0.1:8092` и FastAPI на 8091. Контейнер `ocr` так же запускает свой `llama-server` на `127.0.0.1:8092` и FastAPI на 8090. В compose каждый из них один сервис, не два. Порт llama-server наружу контейнера не публикуется. У OCR нет потолка по потокам и памяти: llama.cpp занимает ядра, которые есть у процесса.
+Контейнер `embedding` внутри себя запускает `llama-server` на `127.0.0.1:8092` и FastAPI на 8091. Контейнер `ocr` так же запускает свой `llama-server` на `127.0.0.1:8092` и FastAPI на 8090. У Switch-Service каждый из них один контейнер, не два. Порт llama-server наружу контейнера не публикуется. У OCR нет потолка по потокам и памяти: llama.cpp занимает ядра, которые есть у процесса.
 
 ## GPU для OCR
 
-Образ `ocr` собирается одной из двух целей:
+Режим CPU/GPU больше не переключается compose-целью и не требует пересборки. Образ `ocr` собирается один раз, целью `cuda`: локальный `localhost/rag-chat_ocr:cuda` поверх `ghcr.io/ggml-org/llama.cpp:server-cuda12` (CUDA 12.8, Ubuntu 24.04). В этом образе уже лежат `llama-server`, библиотеки ggml и runtime CUDA (`libcudart`, `libcublas`). Цель `cpu` (пин-бинарник b11721 на `python:3.12-slim-bookworm`) остаётся в `services/ocr/Dockerfile` для сборки без GPU, но переключателем режима не является: один и тот же CUDA-образ работает в обоих режимах.
 
-- `cpu` (по умолчанию) — пин-бинарник b11721 на `python:3.12-slim-bookworm`. Команды `make up` и `make up-cpu-only` собирают эту цель. Образ CUDA им не нужен.
-- `cuda` — тот же сервис поверх локального образа `ghcr.io/ggml-org/llama.cpp:server-cuda12` (CUDA 12.8, Ubuntu 24.04). В этом образе уже лежат `llama-server`, библиотеки ggml и runtime CUDA (`libcudart`, `libcublas`). Команда `make up-gpu` поднимает слой `docker-compose.gpu.yml`: цель `cuda` и CDI-устройство GPU.
+Режим выбирает `OCR_LLAMA_NGL` в каталоге Switch-Service: `0` — слои остаются на CPU, `999` — все слои уходят на GPU; для embedder то же самое делает `EMBEDDING_LLAMA_NGL`. Смена режима — это пересоздание контейнера Switch-Service (`.venv/bin/switch-service state ocr gpu`), а не пересборка образа. Собирает образ не этот стек: под именем из каталога (`localhost/rag-chat_ocr:cuda`) он должен уже лежать локально, иначе Switch-Service отвечает `IMAGE_MISSING`, а не собирает его сам.
 
-`docker-compose.gpu.yml` — не второй стенд, а слой поверх `docker-compose.yml`; `make up-gpu` передаёт оба файла через `-f`. В cpu-варианте GPU не нужен и в состав стенда он не входит.
+GPU контейнеру отдаёт Switch-Service, тем же способом, каким его отдаёт хост: CDI-устройство `nvidia.com/gpu=all` (`nvidia-ctk cdi list`), как и эталонный `startup_qwen3.8_image_instance_podman.sh`. Драйвер (`libcuda`) приходит с хоста, runtime CUDA остаётся в образе `server-cuda12`. Кэш весов — том `rag-chat_ocr-model-cache` на `/var/cache/huggingface`: его создаёт podman при первом `create`, в compose он не объявляется, процесс пишет в него от пользователя `ocr`.
 
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
-| `GPU_DEVICE_ID` | `all` | Имя CDI-устройства: `all`, `0`, `1` или `0,1` (см. `nvidia-ctk cdi list`). |
+| `OCR_LLAMA_NGL` | по профилю каталога (`0` в `cpu`, `999` в `gpu`) | Сколько слоёв llama.cpp выносит на GPU. Задаётся в каталоге Switch-Service, не в этом репозитории. |
+| `EMBEDDING_LLAMA_NGL` | по профилю каталога (`0` в `cpu`, `999` в `gpu`) | То же для embedder. |
 | `HF_TOKEN` | нет | Необязательный токен Hugging Face. Пусто — анонимное скачивание. |
 
-GPU передаётся контейнеру `ocr` как CDI-устройство `nvidia.com/gpu=...` через `devices:` в `docker-compose.gpu.yml`. Так хост его отдаёт (`nvidia-ctk cdi list`), и так его передаёт эталонный `startup_qwen3.8_image_instance_podman.sh` (`--device nvidia.com/gpu=all`). Под podman-compose 1.5.0 путь `deploy.resources.reservations` устройство не подключает. Драйвер (`libcuda`) приходит с хоста; runtime CUDA остаётся в образе `server-cuda12`. Кэш весов — том `ocr-model-cache` на `/var/cache/huggingface`. Процесс пишет в него от пользователя `ocr`.
-
-Инфраструктура локального стенда: MinIO, MongoDB 7, Qdrant ≥ 1.11, RabbitMQ 3 с management-плагином.
+Инфраструктура локального стенда: MinIO и RabbitMQ 3 (с management-плагином) общие, живут в `common_network` (см. `Common/docker-compose-common.yml`), куда RAG-сервисы подключаются как к external-сети. В составе RAG-стека остаются MongoDB 7 и Qdrant ≥ 1.13. Сеть `models_network` вместе с `ocr`, `embedding`, LLM и генерацией изображений для этого стека тоже external: и сеть, и контейнеры создаёт Switch-Service.
 
 ## Кто что создаёт при старте
 
@@ -45,15 +43,15 @@ GPU передаётся контейнеру `ocr` как CDI-устройст�
 | Индексы `chats` и `messages` | Chat |
 | Коллекция Qdrant и payload-индексы | Processor |
 | Топология RabbitMQ | File Collector, Processor, Deletion Worker |
-| Веса OCR и Embedding | соответствующие процессы до готовности |
+| Веса OCR и Embedding | Switch-Service: процессы `ocr` и `embedding` до готовности |
 
 Повторный старт не пересоздаёт коллекцию и не удаляет данные.
 
 ## Локальный compose
 
-Ниже состав стенда, тот же, что в корневом `docker-compose.yml`. Это не второй манифест: `make up` и `podman compose -f docker-compose.yml` читают тот файл. Секреты подставляются снаружи. У MinIO текущих образов задаются `MINIO_ROOT_USER` и `MINIO_ROOT_PASSWORD`, команда `server /data --console-address ":9001"`.
+Ниже состав стенда, тот же, что в корневом `docker-compose.yml`. Это не второй манифест: `make up` и `podman compose -f docker-compose.yml` читают тот файл. Секреты подставляются снаружи. MinIO и RabbitMQ здесь не описаны — они общие и берутся из `common_network` (см. `Common/docker-compose-common.yml`). OCR и embedding здесь тоже не описаны: их контейнеры держит Switch-Service, а этот стек только подключается к их сети `models_network` как к external.
 
-Порты на хост не публикуются. Имена сетей заданы явно, чтобы Auth Gateway мог подключиться к `rag_edge` как к external, не завися от имени проекта compose. `rag-edge` входит в обе сети: с `rag_edge` его видит gateway, по `rag_internal` он ходит к File Collector, Chat и frontend. Остальные контейнеры только в `rag_internal`.
+Порты на хост не публикуются. Имена сетей заданы явно, чтобы Auth Gateway мог подключиться к `rag_edge` как к external, не завися от имени проекта compose. `rag-edge` входит в обе сети: с `rag_edge` его видит gateway, по `rag_internal` он ходит к File Collector, Chat и frontend. `file-collector`, `processor` и `deletion-worker` дополнительно входят в external-сеть `common_network`, где отвечают общие `minio` (S3) и `rabbit` (AMQP). `processor` и `chat` дополнительно входят в external-сеть `models_network`, где Switch-Service держит `ocr` и `embedding`; адреса в окружении от этого не меняются — `OCR_URL: http://ocr:8090` и `EMBEDDING_URL: http://embedding:8091` резолвятся по именам контейнеров в этой сети. Потребителей в `models_network` можно подключить и снаружи, скриптом Switch-Service (`make network`), но compose делает это сам при старте.
 
 Если `LLM_BASE_URL` — имя на уже существующей `llm_network` (`http://litellm-proxy-server:4000`), контейнер `chat` дополнительно подключают к этой external-сети. К `auth_network` не подключается никто.
 
@@ -63,6 +61,12 @@ networks:
     name: rag_internal
   rag_edge:
     name: rag_edge
+  common_network:
+    name: common_network
+    external: true
+  models_network:
+    name: models_network
+    external: true
   llm_network:
     name: llm_network
     external: true
@@ -82,9 +86,9 @@ services:
 
   file-collector:
     build: ./services/file-collector
-    networks: [rag_internal]
+    networks: [rag_internal, common_network]
     restart: unless-stopped
-    depends_on: [mongo, minio, rabbitmq]
+    depends_on: [mongo]
     environment:
       FILE_COLLECTOR_PORT: "8081"
       MAX_UPLOAD_BYTES: "524288000"
@@ -97,9 +101,9 @@ services:
 
   processor:
     build: ./services/processor
-    networks: [rag_internal]
+    networks: [rag_internal, common_network, models_network]
     restart: unless-stopped
-    depends_on: [mongo, minio, qdrant, ocr, embedding, rabbitmq]
+    depends_on: [mongo, qdrant]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -114,9 +118,9 @@ services:
 
   deletion-worker:
     build: ./services/deletion-worker
-    networks: [rag_internal]
+    networks: [rag_internal, common_network]
     restart: unless-stopped
-    depends_on: [mongo, minio, qdrant, rabbitmq]
+    depends_on: [mongo, qdrant]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -128,9 +132,9 @@ services:
 
   chat:
     build: ./services/chat
-    networks: [rag_internal, llm_network]
+    networks: [rag_internal, llm_network, models_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant, embedding]
+    depends_on: [mongo, qdrant]
     environment:
       CHAT_PORT: "8082"
       MONGODB_URI: mongodb://mongo:27017/rag
@@ -140,36 +144,10 @@ services:
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_MODEL: ${LLM_MODEL}
 
-  ocr:
-    build:
-      context: ./services/ocr
-      target: cpu
-    networks: [rag_internal]
-    restart: unless-stopped
-    volumes: ["ocr-model-cache:/var/cache/huggingface"]
-    environment:
-      OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
-      HF_TOKEN: ${HF_TOKEN:-}
-
-  embedding:
-    build: ./services/embedding
-    networks: [rag_internal]
-    restart: unless-stopped
-
   frontend:
     build: ./frontend
     networks: [rag_internal]
     restart: unless-stopped
-
-  minio:
-    image: minio/minio
-    networks: [rag_internal]
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
-    volumes: ["minio-data:/data"]
 
   mongo:
     image: mongo:7
@@ -183,18 +161,9 @@ services:
     restart: unless-stopped
     volumes: ["qdrant-data:/qdrant/storage"]
 
-  rabbitmq:
-    image: rabbitmq:3-management
-    restart: unless-stopped
-    networks: [rag_internal]
-    volumes: ["rabbit-data:/var/lib/rabbitmq"]
-
 volumes:
-  minio-data:
   mongo-data:
   qdrant-data:
-  rabbit-data:
-  ocr-model-cache:
 ```
 
 Чтобы вызвать File Collector или Chat с хоста без gateway, порт этого сервиса публикуют временно и передают `X-Auth-User-Id`. В состав стенда по умолчанию такая публикация не входит.
@@ -213,7 +182,7 @@ volumes:
 
 ## Проверка стенда
 
-1. `GET /health` у rag-edge, file-collector, chat, ocr, embedding. На публичном хосте тот же путь отвечает edge и не требует cookie.
+1. `GET /health` у rag-edge, file-collector, chat. Те же пути у `ocr` и `embedding` проверяются со стороны Switch-Service (`make network-status`): их health-порты опубликованы только на loopback (`127.0.0.1:18090`, `127.0.0.1:18091`). На публичном хосте тот же путь отвечает edge и не требует cookie.
 2. Загрузка небольшого текстового PDF с заголовком `X-Auth-User-Id` заканчивается статусом `ready`. Тот же запрос только с `X-User-Id` даёт `401`.
 3. Вопрос по фразе из PDF возвращает `meta.sources` с нужным `file_id` и страницей.
 4. `GET /content` этого файла отдаёт байты PDF.
