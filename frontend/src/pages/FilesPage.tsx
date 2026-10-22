@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { FileStatus } from "../components/FileStatus";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/States";
@@ -25,8 +26,21 @@ export function FilesPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
+    document.title = "Файлы · Документы · Filenkov";
+  }, []);
+
+  useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!confirmId) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setConfirmId(null);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [confirmId]);
 
   useFileListPolling(items, () => {
     void load({ silent: true });
@@ -44,16 +58,19 @@ export function FilesPage() {
   const rangeEnd = total === 0 ? 0 : Math.min(offset + serverCount, total);
 
   return (
-    <section className="space-y-5">
+    <section className="view-in screen">
       <div>
-        <h1 className="serif text-3xl">Файлы</h1>
-        <p className="mt-1 text-muted">PDF загружается по одному запросу и обрабатывается в фоне.</p>
+        <div className="page-head">
+          <div>
+            <p className="kicker">Документы</p>
+            <h1>Файлы</h1>
+          </div>
+        </div>
+        <p className="muted page-lead">PDF загружается по одному запросу и обрабатывается в фоне.</p>
       </div>
 
       <label
-        className={`block cursor-pointer rounded-2xl border-2 border-dashed px-5 py-8 text-center ${
-          dragOver ? "border-pine bg-white" : "border-line bg-sheet"
-        } ${uploading ? "opacity-70" : ""}`}
+        className={`dropzone${dragOver ? " is-active" : ""}${uploading ? " is-disabled" : ""}`}
         onDragOver={(event) => {
           event.preventDefault();
           setDragOver(true);
@@ -65,8 +82,8 @@ export function FilesPage() {
           void acceptFiles(event.dataTransfer.files);
         }}
       >
-        <span className="serif text-xl">Перетащите PDF сюда</span>
-        <span className="mt-1 block text-sm text-muted">или выберите файл на диске</span>
+        <span className="dropzone-title">Перетащите PDF сюда</span>
+        <span className="dropzone-hint">или выберите файл на диске</span>
         <input
           className="sr-only"
           type="file"
@@ -78,64 +95,67 @@ export function FilesPage() {
             event.target.value = "";
           }}
         />
-        <span className="mt-4 inline-flex rounded-full bg-pine px-4 py-2 text-sm text-sheet">Выбрать PDF</span>
+        <span className="btn">Выбрать PDF</span>
       </label>
 
       {notice ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-950" role="alert">
+        <div className="banner error" role="alert">
           <p>{notice.text}</p>
           {notice.fileId ? (
-            <Link className="mt-1 inline-flex text-sm underline" to={`/files/${notice.fileId}?page=1`}>
+            <Link className="link" to={`/files/${notice.fileId}?page=1`}>
               Открыть существующий
             </Link>
           ) : null}
         </div>
       ) : null}
-      {pollError ? <p className="text-sm text-red-900">{pollError}</p> : null}
+      {pollError ? (
+        <div className="banner error" role="alert">
+          <p>{pollError}</p>
+        </div>
+      ) : null}
 
       {phase === "loading" ? <LoadingBlock label="Загрузка списка…" /> : null}
-      {phase === "error" && errorMessage ? <ErrorBlock text={errorMessage} onRetry={() => void load()} /> : null}
+      {phase === "error" && errorMessage ? (
+        <ErrorBlock text={errorMessage} onRetry={() => void load()} />
+      ) : null}
       {phase === "ready" && items.length === 0 ? (
-        <EmptyBlock title="Файлов пока нет" text="Загрузите PDF — после обработки по нему можно будет задать вопрос." />
+        <EmptyBlock
+          title="Файлов пока нет"
+          text="Загрузите PDF — после обработки по нему можно будет задать вопрос."
+        />
       ) : null}
 
       {items.length > 0 ? (
-        <div className="overflow-hidden rounded-2xl border border-line bg-sheet">
-          <div className="hidden grid-cols-[minmax(0,1.5fr)_6.5rem_13rem_5rem_9rem_auto] gap-3 border-b border-line px-4 py-2 text-xs uppercase tracking-wide text-muted md:grid">
-            <span>Имя</span>
-            <span>Размер</span>
-            <span>Статус</span>
-            <span>Страницы</span>
-            <span>Загружен</span>
-            <span className="sr-only">Действия</span>
-          </div>
-          <ul>
-            {items.map((file) => (
-              <FileRow
-                key={file.file_id}
-                file={file}
-                confirming={confirmId === file.file_id}
-                onAskDelete={() => setConfirmId(file.file_id)}
-                onCancelDelete={() => setConfirmId(null)}
-                onConfirmDelete={() => {
-                  setConfirmId(null);
-                  void remove(file.file_id);
-                }}
-              />
-            ))}
-          </ul>
+        <div className="table-wrap table-dense">
+          <table>
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th>Размер</th>
+                <th>Статус</th>
+                <th>Страницы</th>
+                <th>Загружен</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((file) => (
+                <FileRow key={file.file_id} file={file} onAskDelete={() => setConfirmId(file.file_id)} />
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : null}
 
       {total > limit ? (
-        <div className="flex items-center justify-between gap-3 text-sm">
-          <p className="text-muted">
+        <div className="pager meta">
+          <p className="muted">
             Показаны {rangeStart}–{rangeEnd} из {total}
           </p>
-          <div className="flex gap-2">
+          <div className="actions">
             <button
               type="button"
-              className="rounded-full border border-line bg-sheet px-3 py-1.5 disabled:opacity-40"
+              className="btn btn-ghost"
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - limit))}
             >
@@ -143,7 +163,7 @@ export function FilesPage() {
             </button>
             <button
               type="button"
-              className="rounded-full border border-line bg-sheet px-3 py-1.5 disabled:opacity-40"
+              className="btn btn-ghost"
               disabled={offset + limit >= total}
               onClick={() => setOffset(offset + limit)}
             >
@@ -152,56 +172,83 @@ export function FilesPage() {
           </div>
         </div>
       ) : null}
+
+      {confirmId
+        ? createPortal(
+            <DeleteFileDialog
+              onCancel={() => setConfirmId(null)}
+              onConfirm={() => {
+                const id = confirmId;
+                setConfirmId(null);
+                void remove(id);
+              }}
+            />,
+            document.body,
+          )
+        : null}
     </section>
   );
 }
 
-function FileRow({
-  file,
-  confirming,
-  onAskDelete,
-  onCancelDelete,
-  onConfirmDelete,
-}: {
-  file: FileCard;
-  confirming: boolean;
-  onAskDelete: () => void;
-  onCancelDelete: () => void;
-  onConfirmDelete: () => void;
-}) {
+function DeleteFileDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, []);
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="delete-file-title">
+      <button type="button" className="overlay-dismiss" aria-label="Нет" onClick={onCancel} />
+      <div className="panel">
+        <h2 id="delete-file-title" ref={titleRef} tabIndex={-1}>
+          Удалить?
+        </h2>
+        <div className="actions">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Нет
+          </button>
+          <button type="button" className="btn btn-danger" onClick={onConfirm}>
+            Да
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileRow({ file, onAskDelete }: { file: FileCard; onAskDelete: () => void }) {
   const canOpen = !file.local && file.status !== "deleting";
   return (
-    <li className="grid gap-3 border-b border-line px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1.5fr)_6.5rem_13rem_5rem_9rem_auto] md:items-center">
-      <div className="min-w-0">
+    <tr>
+      <td className="cell-wrap" data-label="Имя">
         {canOpen ? (
-          <Link className="truncate font-medium text-pine underline-offset-2 hover:underline" to={`/files/${file.file_id}?page=1`}>
+          <Link className="link" to={`/files/${file.file_id}?page=1`}>
             {file.file_name}
           </Link>
         ) : (
-          <p className="truncate font-medium">{file.file_name}</p>
+          <span className="file-name">{file.file_name}</span>
         )}
-      </div>
-      <p className="text-sm text-muted">{formatBytes(file.file_size)}</p>
-      <FileStatus file={file} />
-      <p className="text-sm">{formatPageCount(file.page_count)}</p>
-      <p className="text-sm text-muted">{formatDateTime(file.created_at)}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        {file.local || file.status === "deleting" ? null : confirming ? (
-          <>
-            <span className="text-sm">Удалить?</span>
-            <button type="button" className="rounded-full bg-red-800 px-3 py-1 text-sm text-white" onClick={onConfirmDelete}>
-              Да
+      </td>
+      <td className="nums muted" data-label="Размер">
+        {formatBytes(file.file_size)}
+      </td>
+      <td className="cell-wrap" data-label="Статус">
+        <FileStatus file={file} />
+      </td>
+      <td className="nums" data-label="Страницы">
+        {formatPageCount(file.page_count)}
+      </td>
+      <td className="muted" data-label="Загружен">
+        {formatDateTime(file.created_at)}
+      </td>
+      <td data-label="Действия">
+        <div className="actions">
+          {file.local || file.status === "deleting" ? null : (
+            <button type="button" className="btn btn-danger" onClick={onAskDelete}>
+              Удалить
             </button>
-            <button type="button" className="rounded-full border border-line px-3 py-1 text-sm" onClick={onCancelDelete}>
-              Нет
-            </button>
-          </>
-        ) : (
-          <button type="button" className="rounded-full border border-line px-3 py-1 text-sm" onClick={onAskDelete}>
-            Удалить
-          </button>
-        )}
-      </div>
-    </li>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
