@@ -32,3 +32,34 @@ def test_ngl_rejects_values_outside_the_contract(raw: str) -> None:
     assert captured.value.name == "EMBEDDING_LLAMA_NGL"
     if raw.strip():
         assert raw.strip() not in str(captured.value)
+
+
+def test_mmproj_defaults_to_the_pinned_projector() -> None:
+    assert Settings.from_env({}).mmproj == "mmproj-embeddinggemma-2-Q8_0.gguf"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "embeddinggemma-2-Q8_0.gguf",
+        "mmproj-embeddinggemma-2-Q8_0.safetensors",
+        "/models/mmproj-embeddinggemma-2-Q8_0.gguf",
+        " mmproj-embeddinggemma-2-Q8_0.gguf",
+        "",
+    ],
+)
+def test_mmproj_must_name_a_projector_file(raw: str) -> None:
+    with pytest.raises(ConfigError) as captured:
+        Settings.from_env({"EMBEDDING_MMPROJ": raw})
+    assert captured.value.name == "EMBEDDING_MMPROJ"
+
+
+def test_image_limits_have_defaults_and_bounds() -> None:
+    settings = Settings.from_env({})
+    assert settings.max_images == 4
+    assert settings.max_image_bytes == 10 * 1024 * 1024
+
+    for raw in ("0", "-1", "65", "nope"):
+        with pytest.raises(ConfigError) as captured:
+            Settings.from_env({"EMBEDDING_MAX_IMAGES": raw})
+        assert captured.value.name == "EMBEDDING_MAX_IMAGES"

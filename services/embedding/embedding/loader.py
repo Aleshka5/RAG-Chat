@@ -1,7 +1,8 @@
-"""Load the text-only EmbeddingGemma 2 GGUF and wait until llama-server is ready.
+"""Load the EmbeddingGemma 2 GGUF with its vision projector and wait for llama-server.
 
-The hot path is llama.cpp. PyTorch is not used. Image and audio projectors
-are not downloaded and are not passed to the server.
+The hot path is llama.cpp. PyTorch is not used. The image projector comes from
+the same pinned repository and revision as the text weights; the audio encoder
+is not downloaded and is not passed to the server.
 """
 
 import logging
@@ -22,7 +23,7 @@ from embedding.constants import (
     TOKENIZER_REPO,
     TOKENIZER_REVISION,
 )
-from embedding.encoder import LlamaEncoder, TextEncoder
+from embedding.encoder import Encoder, LlamaEncoder
 from embedding.errors import ModelLoadError
 from embedding.tokens import TokenCounter, TokenizerJsonCounter
 
@@ -31,7 +32,7 @@ log = logging.getLogger("embedding.loader")
 
 @dataclass
 class LoadedModel:
-    encoder: TextEncoder
+    encoder: Encoder
     token_counter: TokenCounter
 
     def close(self) -> None:
@@ -39,12 +40,13 @@ class LoadedModel:
 
 
 def load_model(settings: Settings) -> LoadedModel:
-    """Download the pinned text GGUF, start llama-server, and block until it is healthy."""
+    """Download the pinned weights, start llama-server, and block until it is healthy."""
     log.info("loading embedding model %s", settings.model)
     try:
         tokenizer_path = download_tokenizer()
         token_counter = TokenizerJsonCounter.from_file(tokenizer_path)
         model_path = download_gguf(settings.gguf)
+        mmproj_path = download_mmproj(settings.mmproj)
     except ModelLoadError:
         raise
     except Exception as exc:
@@ -60,7 +62,7 @@ def load_model(settings: Settings) -> LoadedModel:
     if binary is None:
         log.error("llama-server is not on PATH")
         raise ModelLoadError("llama-server is not on PATH")
-    command = build_llama_server_command(settings, model_path, binary)
+    command = build_llama_server_command(settings, model_path, binary, mmproj_path)
     log.info("starting llama-server")
     process = subprocess.Popen(command)
     try:
@@ -73,7 +75,12 @@ def load_model(settings: Settings) -> LoadedModel:
     return LoadedModel(encoder=encoder, token_counter=token_counter)
 
 
-def build_llama_server_command(settings: Settings, model_path: Path, binary: str) -> list[str]:
+def build_llama_server_command(
+    settings: Settings,
+    model_path: Path,
+    binary: str,
+    mmproj_path: Path,
+) -> list[str]:
     context = str(settings.context)
     return [
         binary,
@@ -87,6 +94,11 @@ def build_llama_server_command(settings: Settings, model_path: Path, binary: str
         str(settings.ngl),
         "--model",
         str(model_path),
+        # Without the projector, llama-server answers image input with
+        # "Multimodal data provided, but model does not support multimodal
+        # requests" and vectors for images cannot be produced at all.
+        "--mmproj",
+        str(mmproj_path),
         "--embeddings",
         "--pooling",
         "mean",
@@ -98,23 +110,17 @@ def build_llama_server_command(settings: Settings, model_path: Path, binary: str
         context,
         "--parallel",
         "1",
-        "--no-mmproj",
         "--embd-normalize",
         "2",
     ]
 
 
 def download_gguf(filename: str) -> Path:
-    path = Path(
-        hf_hub_download(
-            repo_id=GGUF_REPO,
-            filename=filename,
-            revision=GGUF_REVISION,
-        )
-    )
-    if not path.is_file():
-        raise ModelLoadError("failed to download EMBEDDING_GGUF")
-    return path
+    return _download_weights(filename, "EMBEDDING_GGUF")
+
+
+def download_mmproj(filename: str) -> Path:
+    return _download_weights(filename, "EMBEDDING_MMPROJ")
 
 
 def download_tokenizer() -> Path:
@@ -127,6 +133,19 @@ def download_tokenizer() -> Path:
     )
     if not path.is_file():
         raise ModelLoadError("failed to download tokenizer.json")
+    return path
+
+
+def _download_weights(filename: str, variable: str) -> Path:
+    path = Path(
+        hf_hub_download(
+            repo_id=GGUF_REPO,
+            filename=filename,
+            revision=GGUF_REVISION,
+        )
+    )
+    if not path.is_file():
+        raise ModelLoadError(f"failed to download {variable}")
     return path
 
 

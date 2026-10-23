@@ -85,6 +85,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /embed/image:
+    post:
+      tags: [Embedding]
+      summary: Посчитать векторы пачки изображений
+      description: |
+        Та же 768-мерная модель и то же пространство, что у текста, поэтому
+        векторы сравнимы с текстовыми запросами. Префикса у изображения нет:
+        модель получает его как есть. Поля текстового контракта (`texts`,
+        `input_type`, `title`) в этом запросе запрещены.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageEmbedRequest"
+      responses:
+        "200":
+          description: Векторы в том же порядке, что и images.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "502":
+          description: llama-server не смог прочитать изображение или посчитать вектор.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: Бюджет EMBEDDING_TIMEOUT исчерпан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   parameters:
     RequestId:
@@ -157,6 +195,26 @@ components:
         title:
           type: string
           description: Имя файла. Обязательно для document и запрещено для query.
+        model:
+          type: string
+          description: Если передано, обязано совпасть с EMBEDDING_MODEL.
+    ImageEmbedRequest:
+      type: object
+      required: [images]
+      properties:
+        images:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            type: string
+            format: byte
+            minLength: 1
+          description: |
+            Base64-контейнера PNG, JPEG, WebP или GIF. Формат определяется по
+            первым байтам, а не по заявленному Content-Type. Одно изображение —
+            не больше EMBEDDING_MAX_IMAGE_BYTES (10 МиБ) после декодирования,
+            вся пачка — не больше EMBEDDING_MAX_IMAGES (4).
         model:
           type: string
           description: Если передано, обязано совпасть с EMBEDDING_MODEL.

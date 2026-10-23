@@ -6,7 +6,7 @@
 
 | Переменная | Кто | По умолчанию | Смысл |
 |------------|-----|--------------|--------|
-| `MONGODB_URI` | file-collector, processor, deletion, chat | нет | URI, включая имя базы. |
+| `MONGODB_URI` | file-collector, processor, deletion, chat | нет | URI, включая имя базы. База RAG живёт в общей MongoDB из `common_network`: `mongodb://mongo:27017/rag`. |
 | `S3_ENDPOINT` | file-collector, processor, deletion | нет | URL MinIO. |
 | `S3_ACCESS_KEY` | те же | нет | |
 | `S3_SECRET_KEY` | те же | нет | |
@@ -93,13 +93,16 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `EMBEDDING_PORT` | `8091` | |
-| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Имя в ответе `/embed`. Энкодеры изображения и звука не загружаются. |
+| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Имя в ответе `/embed` и `/embed/image`. Кодировщик изображения загружается, кодировщик звука — нет. |
 | `EMBEDDING_GGUF` | `embeddinggemma-2-Q8_0.gguf` | Текстовый файл из `ggml-org/embeddinggemma-2-GGUF`. Не F16 и не `mmproj`. |
+| `EMBEDDING_MMPROJ` | `mmproj-embeddinggemma-2-Q8_0.gguf` | Проектор изображения из того же репозитория и ревизии. Имя обязано содержать `mmproj`, иначе процесс не стартует. |
 | `EMBEDDING_LLAMA_URL` | `http://127.0.0.1:8092` | llama-server внутри контейнера. В `rag_internal` этот порт не публикуется. |
 | `EMBEDDING_CONTEXT` | `2048` | Одинаковые `--ctx-size`, `--batch-size` и `--ubatch-size`. |
 | `EMBEDDING_DIM` | `768` | Полная размерность. Усечение Matryoshka в MVP не используется. |
 | `EMBEDDING_MAX_TOKENS` | `1024` | После префикса запроса или документа. Контекст модели — 8192. |
 | `EMBEDDING_BATCH_SIZE` | `16` | Верхняя граница `texts` на CPU. |
+| `EMBEDDING_MAX_IMAGES` | `4` | Верхняя граница `images` на `/embed/image`. Больше 64 не принимается. |
+| `EMBEDDING_MAX_IMAGE_BYTES` | `10485760` | Размер одного изображения после декодирования, 10 МиБ. Больше 100 МиБ не принимается. |
 | `EMBEDDING_TIMEOUT` | `30` | Секунды на одну пачку. |
 | `EMBEDDING_LLAMA_NGL` | `999` | Сколько слоёв уходит на GPU: `999`/`-1` — все, `0` — чистый CPU. Один CUDA-образ обслуживает оба режима. |
 

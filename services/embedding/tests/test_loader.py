@@ -21,24 +21,29 @@ from embedding.loader import (
     LoadedModel,
     build_llama_server_command,
     download_gguf,
+    download_mmproj,
     download_tokenizer,
     load_model,
 )
 from tests.fakes import FakeCounter, FakeEncoder
 
 
-def test_llama_command_matches_the_text_only_contract() -> None:
+def test_llama_command_matches_the_contract() -> None:
     settings = Settings.from_env({})
     command = build_llama_server_command(
         settings,
         Path("/models/embeddinggemma-2-Q8_0.gguf"),
         "llama-server",
+        Path("/models/mmproj-embeddinggemma-2-Q8_0.gguf"),
     )
     assert command[command.index("--host") + 1] == "127.0.0.1"
     assert command[command.index("--port") + 1] == "8092"
     assert command[command.index("-ngl") + 1] == "999"
     assert command.count("-ngl") == 1
     assert command[command.index("--model") + 1].endswith("embeddinggemma-2-Q8_0.gguf")
+    assert command[command.index("--mmproj") + 1].endswith("mmproj-embeddinggemma-2-Q8_0.gguf")
+    assert command.count("--mmproj") == 1
+    assert "--no-mmproj" not in command
     assert "--embeddings" in command
     assert command[command.index("--pooling") + 1] == "mean"
     assert command[command.index("--ctx-size") + 1] == "2048"
@@ -46,12 +51,10 @@ def test_llama_command_matches_the_text_only_contract() -> None:
     assert command[command.index("--ubatch-size") + 1] == "2048"
     assert command[command.index("--parallel") + 1] == "1"
     assert command[command.index("--embd-normalize") + 1] == "2"
-    assert "--no-mmproj" in command
-    assert "--mmproj" not in command
     joined = " ".join(command)
     assert "F16" not in joined
     assert "safetensors" not in joined
-    assert "mmproj-" not in joined
+    assert "audio" not in joined
 
 
 def test_llama_command_passes_the_configured_gpu_layers() -> None:
@@ -60,6 +63,7 @@ def test_llama_command_passes_the_configured_gpu_layers() -> None:
         settings,
         Path("/models/embeddinggemma-2-Q8_0.gguf"),
         "llama-server",
+        Path("/models/mmproj-embeddinggemma-2-Q8_0.gguf"),
     )
     assert command[command.index("-ngl") + 1] == "0"
 
@@ -68,6 +72,7 @@ def test_llama_command_passes_the_configured_gpu_layers() -> None:
         all_layers,
         Path("/models/embeddinggemma-2-Q8_0.gguf"),
         "llama-server",
+        Path("/models/mmproj-embeddinggemma-2-Q8_0.gguf"),
     )
     assert command[command.index("-ngl") + 1] == "-1"
 
@@ -77,6 +82,8 @@ def test_weight_downloads_use_the_pinned_revisions(
 ) -> None:
     gguf = tmp_path / "embeddinggemma-2-Q8_0.gguf"
     gguf.write_bytes(b"gguf")
+    mmproj = tmp_path / "mmproj-embeddinggemma-2-Q8_0.gguf"
+    mmproj.write_bytes(b"gguf")
     tokenizer = tmp_path / "tokenizer.json"
     tokenizer.write_bytes(b"{}")
     seen: list[dict[str, str]] = []
@@ -85,17 +92,33 @@ def test_weight_downloads_use_the_pinned_revisions(
         seen.append(kwargs)
         if kwargs["filename"] == "tokenizer.json":
             return str(tokenizer)
+        if kwargs["filename"].startswith("mmproj-"):
+            return str(mmproj)
         return str(gguf)
 
     monkeypatch.setattr("embedding.loader.hf_hub_download", fake_download)
     assert download_gguf("embeddinggemma-2-Q8_0.gguf") == gguf
+    assert download_mmproj("mmproj-embeddinggemma-2-Q8_0.gguf") == mmproj
     assert download_tokenizer() == tokenizer
     assert seen[0]["repo_id"] == GGUF_REPO
     assert seen[0]["revision"] == GGUF_REVISION
     assert seen[0]["filename"] == "embeddinggemma-2-Q8_0.gguf"
-    assert seen[1]["repo_id"] == TOKENIZER_REPO
-    assert seen[1]["revision"] == TOKENIZER_REVISION
-    assert seen[1]["filename"] == TOKENIZER_FILE
+    assert seen[1]["repo_id"] == GGUF_REPO
+    assert seen[1]["revision"] == GGUF_REVISION
+    assert seen[1]["filename"] == "mmproj-embeddinggemma-2-Q8_0.gguf"
+    assert seen[2]["repo_id"] == TOKENIZER_REPO
+    assert seen[2]["revision"] == TOKENIZER_REVISION
+    assert seen[2]["filename"] == TOKENIZER_FILE
+
+
+def test_missing_projector_names_the_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    absent = tmp_path / "mmproj-embeddinggemma-2-Q8_0.gguf"
+    monkeypatch.setattr("embedding.loader.hf_hub_download", lambda **_kwargs: str(absent))
+    with pytest.raises(ModelLoadError) as captured:
+        download_mmproj("mmproj-embeddinggemma-2-Q8_0.gguf")
+    assert "EMBEDDING_MMPROJ" in str(captured.value)
 
 
 def test_load_model_starts_llama_server_when_it_is_down(
@@ -103,7 +126,10 @@ def test_load_model_starts_llama_server_when_it_is_down(
 ) -> None:
     model_path = tmp_path / "embeddinggemma-2-Q8_0.gguf"
     model_path.write_bytes(b"gguf")
+    projector_path = tmp_path / "projector.gguf"
+    projector_path.write_bytes(b"gguf")
     monkeypatch.setattr("embedding.loader.download_gguf", lambda _filename: model_path)
+    monkeypatch.setattr("embedding.loader.download_mmproj", lambda _filename: projector_path)
     monkeypatch.setattr("embedding.loader.download_tokenizer", lambda: tmp_path / "tokenizer.json")
     monkeypatch.setattr(
         "embedding.loader.TokenizerJsonCounter.from_file", lambda _path: FakeCounter(1)
@@ -139,6 +165,7 @@ def test_load_model_starts_llama_server_when_it_is_down(
     loaded = load_model(Settings.from_env({}))
     assert len(commands) == 1
     assert "--embeddings" in commands[0]
+    assert commands[0][commands[0].index("--mmproj") + 1].endswith("projector.gguf")
     assert commands[0][commands[0].index("--pooling") + 1] == "mean"
     assert commands[0][0] == "/opt/llama/llama-server"
     assert isinstance(loaded.encoder, LlamaEncoder)
@@ -149,6 +176,7 @@ def test_load_model_does_not_spawn_a_second_server(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("embedding.loader.download_gguf", lambda _filename: tmp_path / "m.gguf")
+    monkeypatch.setattr("embedding.loader.download_mmproj", lambda _filename: tmp_path / "p.gguf")
     monkeypatch.setattr("embedding.loader.download_tokenizer", lambda: tmp_path / "tokenizer.json")
     monkeypatch.setattr(
         "embedding.loader.TokenizerJsonCounter.from_file", lambda _path: FakeCounter(1)
@@ -167,6 +195,7 @@ def test_load_model_stops_the_container_when_llama_exits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("embedding.loader.download_gguf", lambda _filename: tmp_path / "m.gguf")
+    monkeypatch.setattr("embedding.loader.download_mmproj", lambda _filename: tmp_path / "p.gguf")
     monkeypatch.setattr("embedding.loader.download_tokenizer", lambda: tmp_path / "tokenizer.json")
     monkeypatch.setattr(
         "embedding.loader.TokenizerJsonCounter.from_file", lambda _path: FakeCounter(1)

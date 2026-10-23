@@ -11,10 +11,10 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from embedding.config import Settings
-from embedding.encoder import TextEncoder
+from embedding.encoder import Encoder
 from embedding.errors import UpstreamFailed, UpstreamTimeout, ValidationFailed
 from embedding.loader import load_model
-from embedding.request import parse_embed_request
+from embedding.request import parse_embed_request, parse_image_request
 from embedding.tokens import TokenCounter
 from embedding.vectors import project_embeddings
 
@@ -28,14 +28,14 @@ _REQUEST_ID = re.compile(
 def create_app(
     settings: Settings | None = None,
     *,
-    encoder: TextEncoder | None = None,
+    encoder: Encoder | None = None,
     token_counter: TokenCounter | None = None,
 ) -> FastAPI:
     """Build the embedding API.
 
     Production startup leaves ``encoder`` and ``token_counter`` empty. The
     lifespan then calls :func:`load_model`, which blocks until llama-server has
-    loaded the GGUF. Inject both only from tests.
+    loaded the GGUF and the vision projector. Inject both only from tests.
     """
     resolved = settings if settings is not None else Settings.from_env()
 
@@ -72,6 +72,18 @@ def create_app(
     async def validation_failed(_request: Request, exc: ValidationFailed) -> JSONResponse:
         return error_response(400, "validation_error", exc.message, exc.fields)
 
+    @app.exception_handler(UpstreamTimeout)
+    async def upstream_timeout(request: Request, exc: UpstreamTimeout) -> JSONResponse:
+        log.warning("embedding timed out request_id=%s", request.state.request_id)
+        log.debug("embedding upstream detail: %s", exc)
+        return error_response(504, "upstream_timeout", "Embedding timed out")
+
+    @app.exception_handler(UpstreamFailed)
+    async def upstream_failed(request: Request, exc: UpstreamFailed) -> JSONResponse:
+        log.warning("embedding upstream failed request_id=%s", request.state.request_id)
+        log.debug("embedding upstream detail: %s", exc)
+        return error_response(502, "upstream_failed", "Embedding upstream failed")
+
     @app.get("/health")
     def health() -> JSONResponse:
         encoder_live = app.state.encoder
@@ -87,32 +99,52 @@ def create_app(
         for prefixed in parsed.prefixed:
             if request.app.state.token_counter.count(prefixed) > current.max_tokens:
                 raise ValidationFailed("Token count exceeds EMBEDDING_MAX_TOKENS", ["texts"])
-        try:
-            raw = await asyncio.to_thread(
-                request.app.state.encoder.embed,
-                parsed.prefixed,
-                request_id=request.state.request_id,
-            )
-            vectors = project_embeddings(raw, len(parsed.prefixed), current.dimension)
-        except UpstreamTimeout:
-            log.warning("embedding timed out request_id=%s", request.state.request_id)
-            return error_response(504, "upstream_timeout", "Embedding timed out")
-        except UpstreamFailed as exc:
-            log.warning(
-                "embedding upstream failed request_id=%s",
-                request.state.request_id,
-            )
-            log.debug("embedding upstream detail: %s", exc)
-            return error_response(502, "upstream_failed", "Embedding upstream failed")
-        return JSONResponse(
-            {
-                "embeddings": vectors,
-                "model": current.model,
-                "dimension": current.dimension,
-            }
+        raw = await asyncio.to_thread(
+            request.app.state.encoder.embed,
+            parsed.prefixed,
+            request_id=request.state.request_id,
+        )
+        return vector_response(
+            project_embeddings(raw, len(parsed.prefixed), current.dimension),
+            current,
+        )
+
+    @app.post("/embed/image")
+    async def embed_image(request: Request) -> JSONResponse:
+        """Image modality: the same vector space as text, without a prefix.
+
+        An image is one input sequence, so the text tokenizer never sees it and
+        the image count is bounded instead by ``EMBEDDING_MAX_IMAGES``.
+        """
+        current = request.app.state.settings
+        parsed = parse_image_request(await _read_json(request), current)
+        raw = await asyncio.to_thread(
+            request.app.state.encoder.embed_images,
+            [image.data for image in parsed.images],
+            request_id=request.state.request_id,
+        )
+        log.debug(
+            "embedded %d image(s) request_id=%s formats=%s",
+            len(parsed.images),
+            request.state.request_id,
+            ",".join(image.format for image in parsed.images),
+        )
+        return vector_response(
+            project_embeddings(raw, len(parsed.images), current.dimension),
+            current,
         )
 
     return app
+
+
+def vector_response(vectors: list[list[float]], settings: Settings) -> JSONResponse:
+    return JSONResponse(
+        {
+            "embeddings": vectors,
+            "model": settings.model,
+            "dimension": settings.dimension,
+        }
+    )
 
 
 def resolve_request_id(header: str | None) -> str:

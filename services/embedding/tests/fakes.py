@@ -1,5 +1,13 @@
 from collections.abc import Callable
 
+DIMENSION = 768
+
+
+def unit_vector(index: int) -> list[float]:
+    vector = [0.0] * DIMENSION
+    vector[index % DIMENSION] = 1.0
+    return vector
+
 
 class FakeEncoder:
     def __init__(
@@ -13,22 +21,28 @@ class FakeEncoder:
         self.error = error
         self._healthy = healthy
         self.seen: list[list[str]] = []
+        self.image_batches: list[list[bytes]] = []
         self.request_ids: list[str | None] = []
         self.closed = False
 
     def embed(self, texts: list[str], *, request_id: str | None = None) -> list[list[float]]:
         self.seen.append(list(texts))
         self.request_ids.append(request_id)
+        return self._vectors(len(texts))
+
+    def embed_images(
+        self, images: list[bytes], *, request_id: str | None = None
+    ) -> list[list[float]]:
+        self.image_batches.append(list(images))
+        self.request_ids.append(request_id)
+        return self._vectors(len(images))
+
+    def _vectors(self, count: int) -> list[list[float]]:
         if self.error is not None:
             raise self.error
         if self.vectors is not None:
             return self.vectors
-        vectors: list[list[float]] = []
-        for index, _text in enumerate(texts):
-            vector = [0.0] * 768
-            vector[index % 768] = 1.0
-            vectors.append(vector)
-        return vectors
+        return [unit_vector(index) for index in range(count)]
 
     def healthy(self) -> bool:
         return self._healthy
