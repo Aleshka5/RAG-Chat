@@ -44,10 +44,11 @@ Gateway для нового хоста с `role_field: global_role` подста
 
 | Сеть | Кто в ней | Кто снаружи |
 |------|-----------|-------------|
-| `rag_internal` | edge, frontend, file-collector, chat, processor, deletion-worker, OCR, embedding, MinIO, MongoDB, Qdrant, RabbitMQ | Никто. Сеть не external. |
+| `rag_internal` | edge, frontend, file-collector, chat, processor, deletion-worker, Qdrant | Никто. Сеть не external. |
+| `common_network` | file-collector, chat, processor, deletion-worker и общие `mongo`, `minio`, `rabbit` | Общая сеть стенда, создаётся в `Common/docker-compose-common.yml`. Для RAG-стека external. |
 | `rag_edge` | только контейнер `rag-edge` | Auth Gateway. Для него сеть external. |
 
-Имена сетей зафиксированы: `rag_internal` и `rag_edge`. Compose Auth подключает **только процесс gateway** к `rag_edge` как к external-сети с этим именем. К `rag_internal` он не подключается и имена `mongo`, `qdrant`, `minio`, `file-collector` оттуда не видит. Порты RAG на хост не публикуются. RAG не входит в `auth_network`.
+Имена сетей зафиксированы: `rag_internal` и `rag_edge`. Compose Auth подключает **только процесс gateway** к `rag_edge` как к external-сети с этим именем. К `rag_internal` он не подключается и имена `qdrant`, `file-collector` оттуда не видит; `mongo`, `minio` и `rabbit` живут в `common_network` и тоже ему недоступны. Порты RAG на хост не публикуются. RAG не входит в `auth_network`.
 
 Порядок: сначала compose RAG, чтобы сеть `rag_edge` и контейнер `rag-edge` существовали, затем пересоздать gateway Auth, чтобы он к сети присоединился. В Caddy для `rag.filenkov.store` — один `reverse_proxy localhost:8083` и тот же набор заголовков, что у остальных продуктовых хостов. Отдельных `handle` по `/api` нет.
 

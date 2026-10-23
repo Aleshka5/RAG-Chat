@@ -56,6 +56,8 @@ flowchart LR
 
 Caddy и Auth Gateway — существующие компоненты. Репозиторий их не содержит. В этом репозитории только `rag-edge`: он смотрит в сеть, к которой подключён gateway, и внутрь сети RAG. Контракт — [gateway.md](gateway.md).
 
+MongoDB, MinIO и RabbitMQ на схеме — общая инфраструктура стенда: их контейнеры создаёт `Common/docker-compose-common.yml` в сети `common_network`, RAG-сервисы подключаются к ним как к external-сети и по имени (`mongo`, `minio`, `rabbit`). RAG занимает в общей MongoDB отдельную базу `rag` и своего контейнера Mongo не создаёт. Qdrant остаётся в составе RAG-стека.
+
 ## Компоненты
 
 | Компонент | Тип | Обязанность |

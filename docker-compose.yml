@@ -4,10 +4,14 @@
 # stack: they live in the shared podman network models_network and are owned by Switch-Service
 # (Switch-Service/docs/models-network.md). processor and chat only join models_network as an
 # external network, to reach http://ocr:8090 and http://embedding:8091 by name.
-# MinIO and RabbitMQ live on the shared common_network (Common/docker-compose-common.yml):
-#   - MinIO answers as `minio` (container_name), RabbitMQ as `rabbit` (alias).
-#   - file-collector / processor / deletion-worker join common_network to reach them.
-# Mongo and Qdrant stay local to this stack.
+# MinIO, RabbitMQ and MongoDB live on the shared common_network
+# (Common/docker-compose-common.yml):
+#   - MinIO answers as `minio` (container_name), RabbitMQ as `rabbit` (alias),
+#     MongoDB as `mongo` (container_name).
+#   - file-collector / processor / deletion-worker / chat join common_network to reach them.
+#   - RAG data lives in its own database inside the shared mongo: MONGODB_URI is
+#     mongodb://mongo:27017/rag. No second mongo instance, no lifecycle of its own here.
+# Qdrant stays local to this stack.
 # LLM_BASE_URL points at litellm-proxy-server on the pre-existing host
 # network llm_network, so chat joins it as an external network.
 
@@ -44,7 +48,6 @@ services:
     build: ./services/file-collector
     networks: [rag_internal, common_network]
     restart: unless-stopped
-    depends_on: [mongo]
     environment:
       FILE_COLLECTOR_PORT: "8081"
       MAX_UPLOAD_BYTES: "524288000"
@@ -59,7 +62,7 @@ services:
     build: ./services/processor
     networks: [rag_internal, common_network, models_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant]
+    depends_on: [qdrant]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -76,7 +79,7 @@ services:
     build: ./services/deletion-worker
     networks: [rag_internal, common_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant]
+    depends_on: [qdrant]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -88,9 +91,9 @@ services:
 
   chat:
     build: ./services/chat
-    networks: [rag_internal, llm_network, models_network]
+    networks: [rag_internal, common_network, llm_network, models_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant]
+    depends_on: [qdrant]
     environment:
       CHAT_PORT: "8082"
       MONGODB_URI: mongodb://mongo:27017/rag
@@ -105,12 +108,6 @@ services:
     networks: [rag_internal]
     restart: unless-stopped
 
-  mongo:
-    image: mongo:7
-    networks: [rag_internal]
-    restart: unless-stopped
-    volumes: ["mongo-data:/data/db"]
-
   qdrant:
     image: qdrant/qdrant:v1.13.4
     networks: [rag_internal]
@@ -118,5 +115,4 @@ services:
     volumes: ["qdrant-data:/qdrant/storage"]
 
 volumes:
-  mongo-data:
   qdrant-data:

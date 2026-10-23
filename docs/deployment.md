@@ -13,7 +13,7 @@
 | `embedding` | 8091 | внутренний HTTP, в `models_network` под Switch-Service |
 | `frontend` | 3000 | статический UI |
 
-Код всех этих образов лежит в одном репозитории, но владельцев у контейнеров два. RAG-стек запускается Podman: `podman compose -f docker-compose.yml` из корня репозитория, вход через `make up`; в нём только `rag-edge`, `file-collector`, `processor`, `deletion-worker`, `chat`, `frontend`, Mongo и Qdrant. OCR, embedding, LLM и генерация изображений в этот compose не входят: их контейнеры создаёт и держит Switch-Service в общей сети `models_network` (см. `Switch-Service/docs/models-network.md`). Второго владельца у них нет намеренно — иначе reconciler Switch-Service и `podman compose up` перетирали бы состояние друг друга. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
+Код всех этих образов лежит в одном репозитории, но владельцев у контейнеров два. RAG-стек запускается Podman: `podman compose -f docker-compose.yml` из корня репозитория, вход через `make up`; в нём только `rag-edge`, `file-collector`, `processor`, `deletion-worker`, `chat`, `frontend` и Qdrant. MongoDB, MinIO и RabbitMQ общие и живут в `common_network`; OCR, embedding, LLM и генерация изображений в этот compose не входят: их контейнеры создаёт и держит Switch-Service в общей сети `models_network` (см. `Switch-Service/docs/models-network.md`). Второго владельца у них нет намеренно — иначе reconciler Switch-Service и `podman compose up` перетирали бы состояние друг друга. Auth Gateway в этот compose не входит. Наружу из RAG смотрит только `rag-edge` в сети `rag_edge`. Для локальной проверки без gateway клиент бьёт во внутренний сервис и сам передаёт `X-Auth-User-Id`. Продакшен так не выставляется. Подробности — в [gateway.md](gateway.md).
 
 Контейнер `embedding` внутри себя запускает `llama-server` на `127.0.0.1:8092` и FastAPI на 8091. Контейнер `ocr` так же запускает свой `llama-server` на `127.0.0.1:8092` и FastAPI на 8090. У Switch-Service каждый из них один контейнер, не два. Порт llama-server наружу контейнера не публикуется. У OCR нет потолка по потокам и памяти: llama.cpp занимает ядра, которые есть у процесса.
 
@@ -31,7 +31,7 @@ GPU контейнеру отдаёт Switch-Service, тем же способо
 | `EMBEDDING_LLAMA_NGL` | по профилю каталога (`0` в `cpu`, `999` в `gpu`) | То же для embedder. |
 | `HF_TOKEN` | нет | Необязательный токен Hugging Face. Пусто — анонимное скачивание. |
 
-Инфраструктура локального стенда: MinIO и RabbitMQ 3 (с management-плагином) общие, живут в `common_network` (см. `Common/docker-compose-common.yml`), куда RAG-сервисы подключаются как к external-сети. В составе RAG-стека остаются MongoDB 7 и Qdrant ≥ 1.13. Сеть `models_network` вместе с `ocr`, `embedding`, LLM и генерацией изображений для этого стека тоже external: и сеть, и контейнеры создаёт Switch-Service.
+Инфраструктура локального стенда: MongoDB 7, MinIO и RabbitMQ 3 (с management-плагином) общие, живут в `common_network` (см. `Common/docker-compose-common.yml`), куда RAG-сервисы подключаются как к external-сети. MongoDB отвечает там по имени `mongo`; RAG занимает в ней отдельную базу `rag` (имя задаётся путём в `MONGODB_URI`) и своего контейнера не создаёт. В составе RAG-стека остаётся только Qdrant ≥ 1.13. Сеть `models_network` вместе с `ocr`, `embedding`, LLM и генерацией изображений для этого стека тоже external: и сеть, и контейнеры создаёт Switch-Service.
 
 ## Кто что создаёт при старте
 
@@ -49,9 +49,9 @@ GPU контейнеру отдаёт Switch-Service, тем же способо
 
 ## Локальный compose
 
-Ниже состав стенда, тот же, что в корневом `docker-compose.yml`. Это не второй манифест: `make up` и `podman compose -f docker-compose.yml` читают тот файл. Секреты подставляются снаружи. MinIO и RabbitMQ здесь не описаны — они общие и берутся из `common_network` (см. `Common/docker-compose-common.yml`). OCR и embedding здесь тоже не описаны: их контейнеры держит Switch-Service, а этот стек только подключается к их сети `models_network` как к external.
+Ниже состав стенда, тот же, что в корневом `docker-compose.yml`. Это не второй манифест: `make up` и `podman compose -f docker-compose.yml` читают тот файл. Секреты подставляются снаружи. MongoDB, MinIO и RabbitMQ здесь не описаны — они общие и берутся из `common_network` (см. `Common/docker-compose-common.yml`). OCR и embedding здесь тоже не описаны: их контейнеры держит Switch-Service, а этот стек только подключается к их сети `models_network` как к external.
 
-Порты на хост не публикуются. Имена сетей заданы явно, чтобы Auth Gateway мог подключиться к `rag_edge` как к external, не завися от имени проекта compose. `rag-edge` входит в обе сети: с `rag_edge` его видит gateway, по `rag_internal` он ходит к File Collector, Chat и frontend. `file-collector`, `processor` и `deletion-worker` дополнительно входят в external-сеть `common_network`, где отвечают общие `minio` (S3) и `rabbit` (AMQP). `processor` и `chat` дополнительно входят в external-сеть `models_network`, где Switch-Service держит `ocr` и `embedding`; адреса в окружении от этого не меняются — `OCR_URL: http://ocr:8090` и `EMBEDDING_URL: http://embedding:8091` резолвятся по именам контейнеров в этой сети. Потребителей в `models_network` можно подключить и снаружи, скриптом Switch-Service (`make network`), но compose делает это сам при старте.
+Порты на хост не публикуются. Имена сетей заданы явно, чтобы Auth Gateway мог подключиться к `rag_edge` как к external, не завися от имени проекта compose. `rag-edge` входит в обе сети: с `rag_edge` его видит gateway, по `rag_internal` он ходит к File Collector, Chat и frontend. `file-collector`, `processor`, `deletion-worker` и `chat` дополнительно входят в external-сеть `common_network`, где отвечают общие `mongo` (MongoDB для базы `rag`), `minio` (S3) и `rabbit` (AMQP). `processor` и `chat` дополнительно входят в external-сеть `models_network`, где Switch-Service держит `ocr` и `embedding`; адреса в окружении от этого не меняются — `OCR_URL: http://ocr:8090` и `EMBEDDING_URL: http://embedding:8091` резолвятся по именам контейнеров в этой сети. Потребителей в `models_network` можно подключить и снаружи, скриптом Switch-Service (`make network`), но compose делает это сам при старте.
 
 Если `LLM_BASE_URL` — имя на уже существующей `llm_network` (`http://litellm-proxy-server:4000`), контейнер `chat` дополнительно подключают к этой external-сети. К `auth_network` не подключается никто.
 
@@ -88,7 +88,6 @@ services:
     build: ./services/file-collector
     networks: [rag_internal, common_network]
     restart: unless-stopped
-    depends_on: [mongo]
     environment:
       FILE_COLLECTOR_PORT: "8081"
       MAX_UPLOAD_BYTES: "524288000"
@@ -103,7 +102,7 @@ services:
     build: ./services/processor
     networks: [rag_internal, common_network, models_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant]
+    depends_on: [qdrant]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -120,7 +119,7 @@ services:
     build: ./services/deletion-worker
     networks: [rag_internal, common_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant]
+    depends_on: [qdrant]
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -132,9 +131,9 @@ services:
 
   chat:
     build: ./services/chat
-    networks: [rag_internal, llm_network, models_network]
+    networks: [rag_internal, common_network, llm_network, models_network]
     restart: unless-stopped
-    depends_on: [mongo, qdrant]
+    depends_on: [qdrant]
     environment:
       CHAT_PORT: "8082"
       MONGODB_URI: mongodb://mongo:27017/rag
@@ -149,12 +148,6 @@ services:
     networks: [rag_internal]
     restart: unless-stopped
 
-  mongo:
-    image: mongo:7
-    networks: [rag_internal]
-    restart: unless-stopped
-    volumes: ["mongo-data:/data/db"]
-
   qdrant:
     image: qdrant/qdrant:v1.13.4
     networks: [rag_internal]
@@ -162,7 +155,6 @@ services:
     volumes: ["qdrant-data:/qdrant/storage"]
 
 volumes:
-  mongo-data:
   qdrant-data:
 ```
 
