@@ -85,7 +85,11 @@ def build_service(settings: Settings) -> DeletionService:
         ),
         settings.s3_bucket,
     )
-    vectors = QdrantVectorStore(connect_qdrant(settings.qdrant_url), settings.qdrant_collection)
+    vectors = QdrantVectorStore(
+        connect_qdrant(settings.qdrant_url),
+        settings.qdrant_collection,
+        settings.qdrant_images_collection,
+    )
     handler = DeletionHandler(
         files,
         objects,

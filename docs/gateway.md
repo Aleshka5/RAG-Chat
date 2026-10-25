@@ -34,6 +34,8 @@ Gateway для нового хоста с `role_field: global_role` подста
 | `/api/chats` и `/api/chats/*` | Chat |
 | всё остальное | Frontend |
 
+Отдельного префикса для изображений нет. `POST /api/files/documents` и `POST /api/files/images` идут в File Collector. `GET /api/chats/image-search` идёт в Chat: `image-search` не является `chat_id`. Edge передаёт эти пути целиком, как остальные пути своих префиксов.
+
 Тело загрузки edge пропускает целиком до `MAX_UPLOAD_BYTES` (по умолчанию 500 МиБ) и не ставит меньший предел. Ответ `413` даёт File Collector. Поток `text/event-stream` edge не буферизует: байты чата уходят клиенту по мере прихода от Chat.
 
 Публичного порта у edge нет. Контейнер состоит в `rag_edge` и в `rag_internal`; с хоста его порт не открыт.

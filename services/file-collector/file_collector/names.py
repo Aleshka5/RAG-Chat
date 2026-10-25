@@ -22,8 +22,11 @@ def validated_file_name(raw: str | None) -> str:
     return base
 
 
-def safe_name(original: str) -> str:
-    """Object-key segment. Unicode letters and digits stay; extension is .pdf."""
+def safe_name(original: str, *, pdf_extension: bool = True) -> str:
+    """Object-key segment. Unicode letters and digits stay.
+
+    PDF intake forces a ``.pdf`` extension. Image manifests keep the cleaned name.
+    """
     base = basename(original)
     cleaned: list[str] = []
     for char in base:
@@ -32,6 +35,10 @@ def safe_name(original: str) -> str:
         else:
             cleaned.append("_")
     collapsed = _REPEATED_UNDERSCORE.sub("_", "".join(cleaned))[:200]
+    if not pdf_extension:
+        if collapsed == "":
+            return "document"
+        return collapsed
     if collapsed == "":
         return "document.pdf"
     named = _force_pdf_extension(collapsed)

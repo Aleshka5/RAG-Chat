@@ -99,8 +99,12 @@ def test_mongo_conditional_filters_and_indexes() -> None:
         "user_id_status",
         "user_id_created_at",
         "user_id_content_sha256_active",
+        "user_id_s3_key_active",
     ]
-    partial = database.files.indexes[-1][1]["partialFilterExpression"]
+    s3_keys, s3_options = database.files.indexes[-1]
+    assert list(s3_keys) == [("user_id", 1), ("s3_key", 1)]
+    assert s3_options["unique"] is True
+    partial = s3_options["partialFilterExpression"]
     assert partial == {"status": {"$in": ["uploaded", "processing", "ready", "error", "deleting"]}}
     assert database.pages.indexes[0][1]["name"] == "file_id_page_number"
     assert database.pages.indexes[0][1]["unique"] is True
@@ -148,26 +152,40 @@ def test_qdrant_delete_filters_user_and_document() -> None:
             )
 
     client = Client()
-    QdrantVectorStore(client, "documents").delete_points("user-1", "file-1")
-    call = client.calls[0]
-    assert call["collection_name"] == "documents"
-    assert call["wait"] is True
-    selector = call["points_selector"]
-    must = selector.filter.must  # type: ignore[attr-defined]
-    assert [(item.key, item.match.value) for item in must] == [
-        ("user_id", "user-1"),
-        ("document_id", "file-1"),
-    ]
+    QdrantVectorStore(client, "documents", "images").delete_points("user-1", "file-1")
+    assert [call["collection_name"] for call in client.calls] == ["documents", "images"]
+    for call in client.calls:
+        assert call["wait"] is True
+        selector = call["points_selector"]
+        must = selector.filter.must  # type: ignore[attr-defined]
+        assert [(item.key, item.match.value) for item in must] == [
+            ("user_id", "user-1"),
+            ("document_id", "file-1"),
+        ]
 
     class MissingCollection:
         def delete(self, collection_name: str, points_selector: object, wait: bool) -> None:
             raise UnexpectedResponse(404, "not found", b"", {})
 
-    QdrantVectorStore(MissingCollection(), "documents").delete_points("user-1", "file-1")
+    QdrantVectorStore(MissingCollection(), "documents", "images").delete_points("user-1", "file-1")
 
     class Down:
         def delete(self, collection_name: str, points_selector: object, wait: bool) -> None:
             raise UnexpectedResponse(503, "down", b"", {})
 
     with pytest.raises(TransientStorageError):
-        QdrantVectorStore(Down(), "documents").delete_points("user-1", "file-1")
+        QdrantVectorStore(Down(), "documents", "images").delete_points("user-1", "file-1")
+
+    class ImagesDown:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def delete(self, collection_name: str, points_selector: object, wait: bool) -> None:
+            self.calls.append(collection_name)
+            if collection_name == "images":
+                raise UnexpectedResponse(503, "down", b"", {})
+
+    images_down = ImagesDown()
+    with pytest.raises(TransientStorageError):
+        QdrantVectorStore(images_down, "documents", "images").delete_points("user-1", "file-1")
+    assert images_down.calls == ["documents", "images"]

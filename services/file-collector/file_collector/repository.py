@@ -75,13 +75,33 @@ class MongoFiles:
         except PyMongoError as exc:
             raise StorageError("mongodb") from exc
 
+    async def _active_conflict(self, user_id: str, content_sha256: str, s3_key: str) -> dict | None:
+        """The s3_key row wins when a race hits both unique indexes."""
+        by_key = await self.find_active_by_s3_key(user_id, s3_key)
+        if by_key is not None:
+            return by_key
+        return await self.find_active_by_hash(user_id, content_sha256)
+
+    async def find_active_by_s3_key(self, user_id: str, s3_key: str) -> dict | None:
+        try:
+            return await self._collection().find_one(
+                {
+                    "user_id": user_id,
+                    "s3_key": s3_key,
+                    "status": {"$in": list(ACTIVE_STATUSES)},
+                }
+            )
+        except PyMongoError as exc:
+            raise StorageError("mongodb") from exc
+
     async def insert(self, document: dict) -> None:
         try:
             await self._collection().insert_one(document)
         except DuplicateKeyError as exc:
-            existing = await self.find_active_by_hash(
+            existing = await self._active_conflict(
                 document["user_id"],
                 document["content_sha256"],
+                document["s3_key"],
             )
             if existing is not None:
                 raise DuplicateActiveFile(existing["file_id"]) from exc

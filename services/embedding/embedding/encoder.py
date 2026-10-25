@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
@@ -5,8 +6,23 @@ import httpx
 from embedding.errors import UpstreamFailed, UpstreamTimeout
 
 
+@dataclass(frozen=True)
+class ImageInput:
+    """One image for the embedding model. There is no text and no task prefix."""
+
+    media_type: str
+    base64_data: str
+
+
 class TextEncoder(Protocol):
     def embed(self, texts: list[str], *, request_id: str | None = None) -> list[list[float]]: ...
+
+    def embed_images(
+        self,
+        images: list[ImageInput],
+        *,
+        request_id: str | None = None,
+    ) -> list[list[float]]: ...
 
     def healthy(self) -> bool: ...
 
@@ -23,20 +39,44 @@ class LlamaEncoder:
         *,
         client: httpx.Client | None = None,
         process: object | None = None,
+        images_ready: bool = True,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.Client(base_url=base_url, timeout=timeout_seconds)
         self._timeout = timeout_seconds
         self._process = process
+        self.images_ready = images_ready
 
     def embed(self, texts: list[str], *, request_id: str | None = None) -> list[list[float]]:
+        return self._embeddings(
+            {"input": texts, "encoding_format": "float"},
+            len(texts),
+            request_id,
+        )
+
+    def embed_images(
+        self,
+        images: list[ImageInput],
+        *,
+        request_id: str | None = None,
+    ) -> list[list[float]]:
+        if not self.images_ready:
+            raise UpstreamFailed("Embedding upstream failed")
+        return self._embeddings(image_embeddings_body(images), len(images), request_id)
+
+    def _embeddings(
+        self,
+        body: dict[str, object],
+        count: int,
+        request_id: str | None,
+    ) -> list[list[float]]:
         headers = {}
         if request_id:
             headers["X-Request-Id"] = request_id
         try:
             response = self._client.post(
                 "/v1/embeddings",
-                json={"input": texts, "encoding_format": "float"},
+                json=body,
                 headers=headers,
                 timeout=self._timeout,
             )
@@ -50,7 +90,7 @@ class LlamaEncoder:
             payload = response.json()
         except ValueError as exc:
             raise UpstreamFailed("Embedding upstream failed") from exc
-        return _ordered_embeddings(payload, len(texts))
+        return _ordered_embeddings(payload, count)
 
     def healthy(self) -> bool:
         try:
@@ -86,6 +126,31 @@ class LlamaEncoder:
             kill = getattr(process, "kill", None)
             if kill is not None:
                 kill()
+
+
+def image_embeddings_body(images: list[ImageInput]) -> dict[str, object]:
+    """JSON body for llama.cpp b11721 ``POST /v1/embeddings``.
+
+    A multimodal item is an object with a ``content`` array. Putting the
+    ``image_url`` part directly in ``input`` is rejected. Image-only content
+    has no text part and no task prefix.
+    """
+    return {
+        "input": [
+            {
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{image.media_type};base64,{image.base64_data}",
+                        },
+                    }
+                ]
+            }
+            for image in images
+        ],
+        "encoding_format": "float",
+    }
 
 
 def _ordered_embeddings(payload: object, count: int) -> list[list[float]]:

@@ -2,15 +2,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo import MongoClient
 from pymongo.errors import PyMongoError
+from rag_common.mongo import FILE_PAGES_INDEXES, FILES_INDEXES
 
 from deletion_worker.errors import TransientStorageError
 from deletion_worker.model import FileRecord
 
 logger = logging.getLogger("deletion_worker")
-
-_ACTIVE_STATUSES = ["uploaded", "processing", "ready", "error", "deleting"]
 
 
 class MongoFileStore:
@@ -23,26 +22,10 @@ class MongoFileStore:
         self._pages = database["file_pages"]
 
     def ensure_indexes(self) -> None:
-        self._files.create_index([("file_id", ASCENDING)], unique=True, name="file_id_unique")
-        self._files.create_index(
-            [("user_id", ASCENDING), ("status", ASCENDING)],
-            name="user_id_status",
-        )
-        self._files.create_index(
-            [("user_id", ASCENDING), ("created_at", DESCENDING)],
-            name="user_id_created_at",
-        )
-        self._files.create_index(
-            [("user_id", ASCENDING), ("content_sha256", ASCENDING)],
-            unique=True,
-            name="user_id_content_sha256_active",
-            partialFilterExpression={"status": {"$in": _ACTIVE_STATUSES}},
-        )
-        self._pages.create_index(
-            [("file_id", ASCENDING), ("page_number", ASCENDING)],
-            unique=True,
-            name="file_id_page_number",
-        )
+        for spec in FILES_INDEXES:
+            spec.create(self._files)
+        for spec in FILE_PAGES_INDEXES:
+            spec.create(self._pages)
 
     def get_file(self, file_id: str) -> FileRecord | None:
         try:

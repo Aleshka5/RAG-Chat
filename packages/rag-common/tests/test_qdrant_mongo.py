@@ -17,6 +17,7 @@ from rag_common.qdrant import (
     DOCUMENT_PAYLOAD_KEY,
     HNSW_M,
     HNSW_PAYLOAD_M,
+    IMAGES_COLLECTION_NAME,
     POINT_ID_NAMESPACE,
     TENANT_PAYLOAD_KEY,
     point_id,
@@ -30,6 +31,7 @@ def test_point_id_formula() -> None:
     assert point_id(file_id.upper(), 3) == point_id(file_id, 3)
     assert point_id(file_id, 0) != point_id(file_id, 1)
     assert COLLECTION_NAME == "documents"
+    assert IMAGES_COLLECTION_NAME == "images"
     assert TENANT_PAYLOAD_KEY == "user_id"
     assert DOCUMENT_PAYLOAD_KEY == "document_id"
     assert DISTANCE == "cosine"
@@ -72,21 +74,37 @@ def test_indexes_are_idempotent_and_match_data_models() -> None:
     ensure_messages_indexes(db)
 
     files = db["files"].calls
-    assert files[0] == ([("file_id", 1)], {"unique": True})
-    assert files[1] == ([("user_id", 1), ("status", 1)], {})
-    assert files[2] == ([("user_id", 1), ("created_at", -1)], {})
+    assert files[0] == ([("file_id", 1)], {"unique": True, "name": "file_id_unique"})
+    assert files[1] == ([("user_id", 1), ("status", 1)], {"name": "user_id_status"})
+    assert files[2] == (
+        [("user_id", 1), ("created_at", -1)],
+        {"name": "user_id_created_at"},
+    )
+    partial = {"status": {"$in": list(ACTIVE_FILE_STATUSES)}}
     assert files[3] == (
         [("user_id", 1), ("content_sha256", 1)],
         {
             "unique": True,
-            "partialFilterExpression": {"status": {"$in": list(ACTIVE_FILE_STATUSES)}},
+            "partialFilterExpression": partial,
+            "name": "user_id_content_sha256_active",
+        },
+    )
+    assert files[4] == (
+        [("user_id", 1), ("s3_key", 1)],
+        {
+            "unique": True,
+            "partialFilterExpression": partial,
+            "name": "user_id_s3_key_active",
         },
     )
     assert "deleted" not in ACTIVE_FILE_STATUSES
-    assert files[4:] == files[:4]
+    assert files[5:] == files[:5]
 
     assert db["file_pages"].calls == [
-        ([("file_id", 1), ("page_number", 1)], {"unique": True}),
+        (
+            [("file_id", 1), ("page_number", 1)],
+            {"unique": True, "name": "file_id_page_number"},
+        ),
     ]
     assert [spec.keys for spec in FILE_PAGES_INDEXES] == [(("file_id", 1), ("page_number", 1))]
     assert [spec.keys for spec in CHATS_INDEXES] == [
@@ -98,4 +116,10 @@ def test_indexes_are_idempotent_and_match_data_models() -> None:
         (("chat_id", 1), ("created_at", 1)),
         (("user_id", 1), ("created_at", -1)),
     ]
-    assert len(FILES_INDEXES) == 4
+    assert len(FILES_INDEXES) == 5
+    assert FILES_INDEXES[4].keys == (("user_id", 1), ("s3_key", 1))
+    assert FILES_INDEXES[4].unique is True
+    assert FILES_INDEXES[4].name == "user_id_s3_key_active"
+    assert FILES_INDEXES[4].partial_filter_expression == {
+        "status": {"$in": ["uploaded", "processing", "ready", "error", "deleting"]}
+    }

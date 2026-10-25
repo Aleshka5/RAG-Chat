@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from chat.cache import QueryVectorCache
 from chat.embedding import EmbeddingClient
 from chat.errors import DependencyUnavailable, UpstreamFailed, UpstreamTimeout
 from chat.llm import LLMClient, ProviderUnavailable
@@ -147,6 +148,105 @@ async def test_qdrant_search_filters_by_user():
 
     with pytest.raises(DependencyUnavailable):
         await QdrantVectorIndex(settings, client=Broken()).search(USER_A, [0.1], 1)
+
+
+class _Point:
+    def __init__(self, payload: dict, score: float | None) -> None:
+        self.payload = payload
+        self.score = score
+
+
+class _QueryResult:
+    def __init__(self, points: list[_Point]) -> None:
+        self.points = points
+
+
+@pytest.mark.asyncio
+async def test_qdrant_image_search_uses_offset_and_skips_incomplete_payloads():
+    settings = make_settings(qdrant_images_collection="photos")
+    complete = {
+        "file_id": "file-1",
+        "document_id": "other",
+        "file_name": "a.jpg",
+        "s3_key": "k",
+        "s3_url": "s3://bucket/k",
+        "user_id": USER_A,
+    }
+    from_document = {
+        "document_id": "file-2",
+        "file_name": "b.jpg",
+        "s3_key": "b",
+        "s3_url": "s3://bucket/b",
+        "user_id": USER_A,
+        "score": 0.4,
+    }
+    missing_key = {
+        "file_id": "file-3",
+        "file_name": "c.jpg",
+        "s3_url": "s3://bucket/c",
+    }
+
+    class Stub:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        async def query_points(self, **kwargs):
+            self.kwargs = kwargs
+            return _QueryResult(
+                [
+                    _Point(missing_key, 0.99),
+                    _Point(from_document, None),
+                    _Point(complete, 0.2),
+                    _Point({"file_name": "d.jpg", "s3_key": "d", "s3_url": "s3://bucket/d"}, 0.8),
+                ]
+            )
+
+    stub = Stub()
+    scan = await QdrantVectorIndex(settings, client=stub).search_images(USER_A, [0.1, 0.2], 2, 5)
+    hits = scan.hits
+    assert scan.scanned == 4
+    assert [hit.file_id for hit in hits] == ["file-2", "file-1"]
+    assert hits[0].score == 0.4
+    assert hits[0].s3_key == "b"
+    assert hits[1].file_name == "a.jpg"
+    assert stub.kwargs["collection_name"] == "photos"
+    assert stub.kwargs["limit"] == 2
+    assert stub.kwargs["offset"] == 5
+    assert stub.kwargs["query"] == [0.1, 0.2]
+    assert "score_threshold" not in stub.kwargs
+    condition = stub.kwargs["query_filter"].must[0]
+    assert condition.key == "user_id"
+    assert condition.match.value == USER_A
+    assert len(stub.kwargs["query_filter"].must) == 1
+
+    class Broken:
+        async def query_points(self, **kwargs):
+            raise RuntimeError("down")
+
+    with pytest.raises(DependencyUnavailable):
+        await QdrantVectorIndex(settings, client=Broken()).search_images(USER_A, [0.1], 1, 0)
+
+
+def test_query_vector_cache_is_lru_and_expires():
+    now = [0.0]
+    cache = QueryVectorCache(2, 60, clock=lambda: now[0])
+    cache.put("user", "one", [1.0])
+    cache.put("user", "two", [2.0])
+    assert cache.get("user", "one") == [1.0]
+    cache.put("user", "three", [3.0])
+    assert cache.get("user", "two") is None
+    assert cache.get("user", "three") == [3.0]
+    assert cache.get("other", "one") is None
+    now[0] = 59.0
+    assert cache.get("user", "one") == [1.0]
+    now[0] = 60.0
+    assert cache.get("user", "one") is None
+    cache.put("user", "one", [1.0, 2.0])
+    copied = cache.get("user", "one")
+    assert copied == [1.0, 2.0]
+    assert copied is not None
+    copied.append(3.0)
+    assert cache.get("user", "one") == [1.0, 2.0]
 
 
 @pytest.mark.asyncio

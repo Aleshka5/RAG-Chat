@@ -19,6 +19,15 @@ from pydantic import (
 
 PROCESS_MESSAGE_TYPE = "doc.process"
 DELETE_MESSAGE_TYPE = "doc.delete"
+PROCESS_CONTENT_TYPES = frozenset(
+    {
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    }
+)
 
 
 def parse_utc(value: Any) -> datetime:
@@ -91,8 +100,8 @@ class DocProcess(_WireMessage):
     @field_validator("content_type")
     @classmethod
     def _content_type(cls, value: str) -> str:
-        if value != "application/pdf":
-            raise ValueError("content_type must be application/pdf")
+        if value not in PROCESS_CONTENT_TYPES:
+            raise ValueError("content_type must be application/pdf or an image type")
         return value
 
     @field_validator("created_at", mode="before")

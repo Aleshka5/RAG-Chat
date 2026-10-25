@@ -17,21 +17,27 @@ from file_collector.schema import (
     deletion_claim_filter,
     file_indexes,
 )
+from rag_common.mongo import FILES_INDEXES
 
 
 def test_partial_unique_index_excludes_deleted() -> None:
     indexes = file_indexes()
-    partial = indexes[-1]
-    assert partial["unique"] is True
-    assert partial["keys"] == [("user_id", 1), ("content_sha256", 1)]
-    statuses = partial["partialFilterExpression"]["status"]["$in"]
-    assert statuses == list(ACTIVE_STATUSES)
-    assert "deleted" not in statuses
-    assert [spec["keys"] for spec in indexes[:3]] == [
-        [("file_id", 1)],
-        [("user_id", 1), ("status", 1)],
-        [("user_id", 1), ("created_at", -1)],
-    ]
+    assert [tuple(spec["keys"]) for spec in indexes] == [spec.keys for spec in FILES_INDEXES]
+    assert [spec["name"] for spec in indexes] == [spec.name for spec in FILES_INDEXES]
+    assert [spec["unique"] for spec in indexes] == [spec.unique for spec in FILES_INDEXES]
+    by_keys = {tuple(spec["keys"]): spec for spec in indexes}
+    for keys in (
+        (("user_id", 1), ("content_sha256", 1)),
+        (("user_id", 1), ("s3_key", 1)),
+    ):
+        partial = by_keys[keys]
+        assert partial["unique"] is True
+        statuses = partial["partialFilterExpression"]["status"]["$in"]
+        assert statuses == list(ACTIVE_STATUSES)
+        assert "deleted" not in statuses
+        shared = next(spec for spec in FILES_INDEXES if spec.keys == keys)
+        assert partial["partialFilterExpression"] == shared.partial_filter_expression
+    assert by_keys[(("user_id", 1), ("s3_key", 1))]["name"] == "user_id_s3_key_active"
     assert indexes[0]["unique"] is True
 
 

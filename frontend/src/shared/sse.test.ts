@@ -91,6 +91,39 @@ describe("SSE chat stream", () => {
     expect(events).toEqual([{ type: "delta", content: "А" }]);
   });
 
+  it("reads image hits beside an empty source list", () => {
+    const image = {
+      file_id: "6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f",
+      file_name: "a.jpg",
+      score: 0.77,
+      content_path: "/api/files/6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f/content",
+    };
+    const raw =
+      [
+        "event: meta",
+        `data: ${JSON.stringify({
+          chat_id: "b7e1a2c4-1111-4222-8333-444455556666",
+          user_message_id: "11111111-1111-4111-8111-111111111111",
+          assistant_message_id: "22222222-2222-4222-8222-222222222222",
+          sources: [],
+          images: [image],
+        })}`,
+        "",
+        "",
+      ].join("\n");
+    const { events } = parseChatSseChunk(raw);
+    expect(events).toEqual([
+      {
+        type: "meta",
+        chat_id: "b7e1a2c4-1111-4222-8333-444455556666",
+        user_message_id: "11111111-1111-4111-8111-111111111111",
+        assistant_message_id: "22222222-2222-4222-8222-222222222222",
+        sources: [],
+        images: [image],
+      },
+    ]);
+  });
+
   it("leaves an unfinished block for the next chunk", () => {
     const { events, rest } = consumeSseBuffer("event: delta\ndata: {\"content\":\"A\"}");
     expect(events).toEqual([]);

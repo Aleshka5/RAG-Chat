@@ -5,6 +5,30 @@ from embedding.constants import DEFAULT_NGL
 from embedding.errors import ConfigError
 
 
+def test_image_limits_and_mmproj_default() -> None:
+    settings = Settings.from_env({})
+    assert settings.max_images == 4
+    assert settings.max_image_bytes == 10485760
+    assert settings.mmproj == "mmproj-embeddinggemma-2-Q8_0.gguf"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "mmproj-embeddinggemma-2-F16.gguf",
+        "mmproj-embeddinggemma-2-audio-Q8_0.gguf",
+        "audio-mmproj.gguf",
+        "../mmproj-embeddinggemma-2-Q8_0.gguf",
+        "mmproj-embeddinggemma-2-Q8_0.bin",
+    ],
+)
+def test_mmproj_rejects_float16_audio_and_paths(raw: str) -> None:
+    with pytest.raises(ConfigError) as captured:
+        Settings.from_env({"EMBEDDING_MMPROJ": raw})
+    assert captured.value.name == "EMBEDDING_MMPROJ"
+    assert raw not in str(captured.value)
+
+
 def test_ngl_defaults_to_all_layers() -> None:
     settings = Settings.from_env({})
     assert DEFAULT_NGL == 999

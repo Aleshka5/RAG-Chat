@@ -13,6 +13,15 @@ def test_safe_name_keeps_unicode_letters_and_forces_pdf_extension() -> None:
     assert safe_name("C:\\docs\\a.pdf") == "a.pdf"
 
 
+def test_safe_name_keeps_image_extension_when_pdf_extension_is_off() -> None:
+    assert safe_name("a.jpg", pdf_extension=False) == "a.jpg"
+    assert safe_name("my photo.png", pdf_extension=False) == "my_photo.png"
+    assert safe_name("weird?.gif", pdf_extension=False) == "weird_.gif"
+    assert safe_name("фото.webp", pdf_extension=False) == "фото.webp"
+    assert safe_name("", pdf_extension=False) == "document"
+    assert safe_name("a.jpg") == "a.pdf"
+
+
 def test_safe_name_stays_within_200_characters() -> None:
     named = safe_name("a" * 250)
     assert named.endswith(".pdf")

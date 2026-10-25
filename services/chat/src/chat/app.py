@@ -11,7 +11,7 @@ from chat.embedding import EmbeddingClient
 from chat.errors import ChatError, DependencyUnavailable, ValidationFailed, error_response
 from chat.llm import LLMClient
 from chat.repository import MongoChatRepository
-from chat.service import ChatService, chat_payload, message_payload
+from chat.service import ChatService, chat_payload, image_search_payload, message_payload
 from chat.textutil import DEFAULT_TITLE, canonical_uuid
 from chat.vectors import QdrantVectorIndex
 
@@ -80,6 +80,7 @@ def create_app(
     app.add_api_route("/health", health, methods=["GET"])
     app.add_api_route("/api/chats", create_chat, methods=["POST"])
     app.add_api_route("/api/chats", list_chats, methods=["GET"])
+    app.add_api_route("/api/chats/image-search", image_search, methods=["GET"])
     app.add_api_route("/api/chats/{chat_id}", get_chat, methods=["GET"])
     app.add_api_route("/api/chats/{chat_id}", delete_chat, methods=["DELETE"])
     app.add_api_route("/api/chats/{chat_id}/messages", create_message, methods=["POST"])
@@ -115,6 +116,21 @@ async def list_chats(request: Request) -> JSONResponse:
     )
 
 
+async def image_search(request: Request) -> JSONResponse:
+    try:
+        query, limit, offset = _parse_image_search(request.query_params)
+        matches = await _service(request).search_image_matches(
+            user_id=user_id_of(request),
+            query=query,
+            limit=limit,
+            offset=offset,
+            request_id=request_id_of(request),
+        )
+    except ChatError as exc:
+        return error_response(exc, request_id_of(request))
+    return JSONResponse(content=image_search_payload(matches, limit, offset))
+
+
 async def get_chat(request: Request, chat_id: str) -> JSONResponse:
     try:
         canonical = _require_chat_id(chat_id)
@@ -148,12 +164,13 @@ async def delete_chat(request: Request, chat_id: str) -> Response:
 async def create_message(request: Request, chat_id: str) -> Response:
     try:
         canonical = _require_chat_id(chat_id)
-        content = _parse_content(await request.body())
+        content, mode = _parse_message(await request.body())
         session = await _service(request).open_answer(
             user_id=user_id_of(request),
             chat_id=canonical,
             content=content,
             request_id=request_id_of(request),
+            mode=mode,
         )
     except ChatError as exc:
         return error_response(exc, request_id_of(request))
@@ -221,7 +238,38 @@ def _parse_create_chat(raw: bytes) -> str:
     return title
 
 
-def _parse_content(raw: bytes) -> str:
+def _parse_image_search(params: Mapping[str, str]) -> tuple[str, int, int]:
+    fields: list[str] = []
+    query = ""
+    if "q" not in params:
+        fields.append("q")
+    else:
+        query = params["q"].strip()
+        if not query or len(query) > 4000:
+            fields.append("q")
+    limit = 20
+    offset = 0
+    if "limit" in params:
+        raw_limit = params["limit"]
+        if raw_limit.isdigit() and 1 <= int(raw_limit) <= 50:
+            limit = int(raw_limit)
+        else:
+            fields.append("limit")
+    if "offset" in params:
+        raw_offset = params["offset"]
+        if raw_offset.isdigit():
+            offset = int(raw_offset)
+        else:
+            fields.append("offset")
+    if fields:
+        raise ValidationFailed(fields)
+    return query, limit, offset
+
+
+_MESSAGE_MODES = {"documents", "images"}
+
+
+def _parse_message(raw: bytes) -> tuple[str, str]:
     if not raw.strip():
         raise ValidationFailed(["content"])
     try:
@@ -230,9 +278,21 @@ def _parse_content(raw: bytes) -> str:
         raise ValidationFailed(["body"]) from exc
     if not isinstance(data, dict):
         raise ValidationFailed(["body"])
+    fields: list[str] = []
+    content = ""
     if "content" not in data or not isinstance(data["content"], str):
-        raise ValidationFailed(["content"])
-    content = data["content"].strip()
-    if not content or len(content) > 4000:
-        raise ValidationFailed(["content"])
-    return content
+        fields.append("content")
+    else:
+        content = data["content"].strip()
+        if not content or len(content) > 4000:
+            fields.append("content")
+    mode = "documents"
+    if "mode" in data:
+        raw_mode = data["mode"]
+        if raw_mode not in _MESSAGE_MODES:
+            fields.append("mode")
+        else:
+            mode = raw_mode
+    if fields:
+        raise ValidationFailed(fields)
+    return content, mode

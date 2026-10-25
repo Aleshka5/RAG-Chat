@@ -34,6 +34,7 @@ class Settings:
     s3_bucket: str = "documents"
     s3_region: str = "us-east-1"
     qdrant_collection: str = "documents"
+    qdrant_images_collection: str = "images"
     rabbitmq_exchange: str = "doc_events"
     rabbitmq_dlx: str = "doc_events_dlq"
     log_level: str = "info"
@@ -77,6 +78,7 @@ def load_settings(environ: os._Environ[str] | dict[str, str] | None = None) -> S
             s3_bucket=_str(env, "S3_BUCKET", "documents"),
             s3_region=_str(env, "S3_REGION", "us-east-1"),
             qdrant_collection=_str(env, "QDRANT_COLLECTION", "documents"),
+            qdrant_images_collection=_str(env, "QDRANT_IMAGES_COLLECTION", "images"),
             rabbitmq_exchange=_str(env, "RABBITMQ_EXCHANGE", "doc_events"),
             rabbitmq_dlx=_str(env, "RABBITMQ_DLX", "doc_events_dlq"),
             log_level=_log_level(env),

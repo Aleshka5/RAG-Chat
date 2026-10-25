@@ -4,7 +4,7 @@ import copy
 from datetime import datetime
 from typing import Any
 
-from processor.errors import TransientFailure
+from processor.errors import PermanentFailure, TransientFailure
 from processor.mongo_store import EMPTY_CHECKPOINT
 
 
@@ -149,6 +149,15 @@ class MemoryFiles:
         file["updated_at"] = now
         return True
 
+    def mark_image_ready(self, file_id: str, now: datetime) -> bool:
+        file = self.files.get(file_id)
+        if file is None or file["status"] != "processing":
+            return False
+        file["status"] = "ready"
+        file["error"] = None
+        file["updated_at"] = now
+        return True
+
     def find_enqueue_failed(self, older_than: datetime) -> list[dict[str, Any]]:
         return [
             copy.deepcopy(file)
@@ -178,14 +187,27 @@ class FakeOcr:
 
 
 class FakeEmbed:
-    def __init__(self, dimension: int, on_call: Any = None) -> None:
+    def __init__(
+        self,
+        dimension: int,
+        on_call: Any = None,
+        *,
+        on_image: Any = None,
+        image_status: int | None = None,
+        image_vector: list[float] | None = None,
+    ) -> None:
         self.dimension = dimension
         self.on_call = on_call
+        self.on_image = on_image
+        self.image_status = image_status
+        self.image_vector = image_vector
         self.calls: list[dict[str, Any]] = []
+        self.image_calls: list[dict[str, Any]] = []
 
     def embed_documents(self, texts: list[str], title: str, request_id: str) -> list[list[float]]:
         self.calls.append(
             {
+                "path": "/embed",
                 "texts": list(texts),
                 "title": title,
                 "request_id": request_id,
@@ -196,10 +218,26 @@ class FakeEmbed:
             self.on_call(texts, title, request_id)
         return [[float(index + 1)] * self.dimension for index in range(len(texts))]
 
+    def embed_image(self, image: bytes, request_id: str) -> list[float]:
+        self.image_calls.append({"path": "/embed/image", "image": image, "request_id": request_id})
+        if self.on_image is not None:
+            self.on_image(image, request_id)
+        if self.image_status == 400:
+            raise PermanentFailure("embedding_failed")
+        if self.image_status is not None and 500 <= self.image_status <= 599:
+            raise TransientFailure(
+                f"embedding http {self.image_status}",
+                permanent_code="embedding_failed",
+            )
+        if self.image_vector is not None:
+            return list(self.image_vector)
+        return [1.0] * self.dimension
+
 
 class FakeQdrant:
     def __init__(self) -> None:
         self.points: dict[str, dict[str, Any]] = {}
+        self.image_points: dict[str, dict[str, Any]] = {}
         self.ops: list[tuple] = []
         self.fail_upserts = 0
         self.fail_deletes = 0
@@ -218,6 +256,27 @@ class FakeQdrant:
             self.fail_deletes -= 1
             raise TransientFailure("qdrant", permanent_code="index_write_failed")
         self._drop(user_id, document_id, None)
+
+    def upsert_images(self, points: list[dict[str, Any]]) -> None:
+        self.ops.append(("upsert_images", len(points)))
+        if self.fail_upserts:
+            self.fail_upserts -= 1
+            raise TransientFailure("qdrant", permanent_code="index_write_failed")
+        for point in points:
+            self.image_points[point["id"]] = point
+
+    def delete_image(self, user_id: str, document_id: str) -> None:
+        self.ops.append(("delete_image", user_id, document_id))
+        if self.fail_deletes:
+            self.fail_deletes -= 1
+            raise TransientFailure("qdrant", permanent_code="index_write_failed")
+        drop = [
+            key
+            for key, point in self.image_points.items()
+            if point["payload"].get("user_id") == user_id and point["payload"].get("document_id") == document_id
+        ]
+        for key in drop:
+            del self.image_points[key]
 
     def delete_tail(self, user_id: str, document_id: str, chunk_index_gte: int) -> None:
         self.ops.append(("delete_tail", user_id, document_id, chunk_index_gte))

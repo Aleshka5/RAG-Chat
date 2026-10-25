@@ -3,7 +3,7 @@
 import copy
 
 from file_collector.clock import utcnow
-from file_collector.errors import DuplicateActiveFile, PublishError, StorageError
+from file_collector.errors import DuplicateActiveFile, ObjectNotFound, PublishError, StorageError
 from file_collector.schema import ACTIVE_STATUSES, deletion_allowed, file_indexes
 
 
@@ -27,8 +27,7 @@ class FakeFiles:
         self.indexes = file_indexes()
 
     async def find_active_by_hash(self, user_id: str, content_sha256: str) -> dict | None:
-        if self.blind_lookups:
-            self.blind_lookups -= 1
+        if self._skip_lookup():
             return None
         for document in self.docs.values():
             if (
@@ -39,18 +38,44 @@ class FakeFiles:
                 return copy.deepcopy(document)
         return None
 
+    def _skip_lookup(self) -> bool:
+        if self.blind_lookups:
+            self.blind_lookups -= 1
+            return True
+        return False
+
+    async def find_active_by_s3_key(self, user_id: str, s3_key: str) -> dict | None:
+        if self._skip_lookup():
+            return None
+        for document in self.docs.values():
+            if (
+                document["user_id"] == user_id
+                and document["s3_key"] == s3_key
+                and document["status"] in ACTIVE_STATUSES
+            ):
+                return copy.deepcopy(document)
+        return None
+
     async def insert(self, document: dict) -> None:
         if self.fail_insert:
             raise StorageError("mongodb")
         if document["file_id"] in self.docs:
             raise StorageError("mongodb")
+        key_match = None
+        hash_match = None
         for existing in self.docs.values():
             if (
-                existing["user_id"] == document["user_id"]
-                and existing["content_sha256"] == document["content_sha256"]
-                and existing["status"] in ACTIVE_STATUSES
+                existing["user_id"] != document["user_id"]
+                or existing["status"] not in ACTIVE_STATUSES
             ):
-                raise DuplicateActiveFile(existing["file_id"])
+                continue
+            if existing["s3_key"] == document["s3_key"]:
+                key_match = existing
+            if existing["content_sha256"] == document["content_sha256"]:
+                hash_match = existing
+        winner = key_match or hash_match
+        if winner is not None:
+            raise DuplicateActiveFile(winner["file_id"])
         self.docs[document["file_id"]] = copy.deepcopy(document)
 
     async def mark_enqueue_failed(self, file_id: str, user_id: str) -> None:
@@ -99,11 +124,14 @@ class FakeObjects:
         self.puts: list[str] = []
         self.deletes: list[str] = []
         self.gets = 0
+        self.heads = 0
+        self.head_sizes: dict[str, int | None] = {}
         self.bucket = False
         self.closed = False
         self.fail_put = False
         self.fail_delete = False
         self.fail_get = False
+        self.fail_head = False
 
     async def connect(self) -> None:
         return None
@@ -113,6 +141,16 @@ class FakeObjects:
 
     async def ensure_bucket(self) -> None:
         self.bucket = True
+
+    async def head(self, key: str) -> int | None:
+        self.heads += 1
+        if self.fail_head:
+            raise StorageError("s3")
+        if key not in self.objects:
+            raise ObjectNotFound(key)
+        if key in self.head_sizes:
+            return self.head_sizes[key]
+        return len(self.objects[key])
 
     async def put(self, key: str, data, length: int) -> None:
         payload = data.read()

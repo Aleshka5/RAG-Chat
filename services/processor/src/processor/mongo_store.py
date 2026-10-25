@@ -14,6 +14,7 @@ from pymongo.errors import (
     NetworkTimeout,
     ServerSelectionTimeoutError,
 )
+from rag_common.mongo import FILE_PAGES_INDEXES, FILES_INDEXES
 
 from processor.config import Settings
 from processor.errors import TransientFailure
@@ -79,6 +80,17 @@ def ready_update(page_count: int, now: datetime) -> dict[str, Any]:
     }
 
 
+def image_ready_update(now: datetime) -> dict[str, Any]:
+    """Same finished-file write as ``ready_update`` without page progress."""
+    return {
+        "$set": {
+            "status": "ready",
+            "error": None,
+            "updated_at": now,
+        }
+    }
+
+
 def error_update(code: str, now: datetime) -> dict[str, Any]:
     return {"$set": {"status": "error", "error": code, "updated_at": now}}
 
@@ -109,20 +121,10 @@ class MongoFiles:
 
     def ensure_indexes(self) -> None:
         def once() -> None:
-            self.files.create_index([("file_id", 1)], unique=True, name="file_id_unique")
-            self.files.create_index([("user_id", 1), ("status", 1)], name="user_id_status")
-            self.files.create_index([("user_id", 1), ("created_at", -1)], name="user_id_created_at")
-            self.files.create_index(
-                [("user_id", 1), ("content_sha256", 1)],
-                unique=True,
-                name="user_id_content_sha256_active",
-                partialFilterExpression={"status": {"$in": ["uploaded", "processing", "ready", "error", "deleting"]}},
-            )
-            self.pages.create_index(
-                [("file_id", 1), ("page_number", 1)],
-                unique=True,
-                name="file_id_page_number",
-            )
+            for spec in FILES_INDEXES:
+                spec.create(self.files)
+            for spec in FILE_PAGES_INDEXES:
+                spec.create(self.pages)
 
         self._run(once)
 
@@ -294,6 +296,13 @@ class MongoFiles:
     def mark_ready(self, file_id: str, page_count: int, now: datetime) -> bool:
         def once() -> bool:
             result = self.files.update_one(processing_filter(file_id), ready_update(page_count, now))
+            return result.matched_count == 1
+
+        return self._run(once)
+
+    def mark_image_ready(self, file_id: str, now: datetime) -> bool:
+        def once() -> bool:
+            result = self.files.update_one(processing_filter(file_id), image_ready_update(now))
             return result.matched_count == 1
 
         return self._run(once)

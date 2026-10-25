@@ -33,6 +33,7 @@ class MessageRecord:
     created_at: datetime
     sources: list[dict[str, object]] | None = None
     finish_reason: str | None = None
+    images: list[dict[str, object]] | None = None
 
 
 @dataclass(slots=True)
@@ -56,6 +57,7 @@ class Turn:
     assistant_created_at: datetime
     title: str
     finish_reason: str | None = None
+    images: list[dict[str, object]] | None = None
 
 
 class ChatRepository(Protocol):
@@ -231,6 +233,8 @@ class MongoChatRepository:
         }
         if turn.finish_reason == "retrieval_only":
             assistant_doc["finish_reason"] = "retrieval_only"
+        if turn.images is not None:
+            assistant_doc["images"] = list(turn.images)
         async with self._guard():
             await self._messages.insert_one(user_doc)
             await self._messages.insert_one(assistant_doc)
@@ -259,21 +263,28 @@ class MongoChatRepository:
 
     @staticmethod
     def _message_from(document: dict) -> MessageRecord:
+        role = str(document["role"])
         sources = document.get("sources")
-        if document.get("role") != "assistant":
+        images = None
+        if role != "assistant":
             sources = None
-        elif sources is None:
-            sources = []
+        else:
+            if sources is None:
+                sources = []
+            if "images" in document:
+                raw_images = document.get("images")
+                images = list(raw_images) if isinstance(raw_images, list) else []
         finish_reason = document.get("finish_reason")
-        if document.get("role") != "assistant" or finish_reason != "retrieval_only":
+        if role != "assistant" or finish_reason != "retrieval_only":
             finish_reason = None
         return MessageRecord(
             message_id=str(document["message_id"]),
             chat_id=str(document["chat_id"]),
             user_id=str(document["user_id"]),
-            role=str(document["role"]),
+            role=role,
             content=str(document["content"]),
             created_at=_aware(document["created_at"]),
             sources=list(sources) if sources is not None else None,
             finish_reason=finish_reason,
+            images=images,
         )

@@ -14,7 +14,7 @@ from embedding.config import Settings
 from embedding.encoder import TextEncoder
 from embedding.errors import UpstreamFailed, UpstreamTimeout, ValidationFailed
 from embedding.loader import load_model
-from embedding.request import parse_embed_request
+from embedding.request import parse_embed_request, parse_image_embed_request
 from embedding.tokens import TokenCounter
 from embedding.vectors import project_embeddings
 
@@ -87,30 +87,26 @@ def create_app(
         for prefixed in parsed.prefixed:
             if request.app.state.token_counter.count(prefixed) > current.max_tokens:
                 raise ValidationFailed("Token count exceeds EMBEDDING_MAX_TOKENS", ["texts"])
-        try:
-            raw = await asyncio.to_thread(
-                request.app.state.encoder.embed,
+
+        def produce() -> list[list[float]]:
+            return request.app.state.encoder.embed(
                 parsed.prefixed,
                 request_id=request.state.request_id,
             )
-            vectors = project_embeddings(raw, len(parsed.prefixed), current.dimension)
-        except UpstreamTimeout:
-            log.warning("embedding timed out request_id=%s", request.state.request_id)
-            return error_response(504, "upstream_timeout", "Embedding timed out")
-        except UpstreamFailed as exc:
-            log.warning(
-                "embedding upstream failed request_id=%s",
-                request.state.request_id,
+
+        return await _embedding_response(request, produce, len(parsed.prefixed))
+
+    @app.post("/embed/image")
+    async def embed_image(request: Request) -> JSONResponse:
+        parsed = parse_image_embed_request(await _read_json(request), request.app.state.settings)
+
+        def produce() -> list[list[float]]:
+            return request.app.state.encoder.embed_images(
+                parsed.images,
+                request_id=request.state.request_id,
             )
-            log.debug("embedding upstream detail: %s", exc)
-            return error_response(502, "upstream_failed", "Embedding upstream failed")
-        return JSONResponse(
-            {
-                "embeddings": vectors,
-                "model": current.model,
-                "dimension": current.dimension,
-            }
-        )
+
+        return await _embedding_response(request, produce, len(parsed.images))
 
     return app
 
@@ -119,6 +115,34 @@ def resolve_request_id(header: str | None) -> str:
     if header is not None and _REQUEST_ID.fullmatch(header.strip()):
         return header.strip()
     return str(uuid.uuid4())
+
+
+async def _embedding_response(
+    request: Request,
+    produce: Callable[[], list[list[float]]],
+    count: int,
+) -> JSONResponse:
+    current = request.app.state.settings
+    try:
+        raw = await asyncio.to_thread(produce)
+        vectors = project_embeddings(raw, count, current.dimension)
+    except UpstreamTimeout:
+        log.warning("embedding timed out request_id=%s", request.state.request_id)
+        return error_response(504, "upstream_timeout", "Embedding timed out")
+    except UpstreamFailed as exc:
+        log.warning(
+            "embedding upstream failed request_id=%s",
+            request.state.request_id,
+        )
+        log.debug("embedding upstream detail: %s", exc)
+        return error_response(502, "upstream_failed", "Embedding upstream failed")
+    return JSONResponse(
+        {
+            "embeddings": vectors,
+            "model": current.model,
+            "dimension": current.dimension,
+        }
+    )
 
 
 def error_response(

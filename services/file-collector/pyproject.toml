@@ -9,8 +9,12 @@ dependencies = [
   "minio>=7.2.15",
   "motor>=3.7.0",
   "python-multipart>=0.0.18",
+  "rag-common",
   "uvicorn[standard]>=0.34.0",
 ]
+
+[tool.uv.sources]
+rag-common = { path = "../../packages/rag-common" }
 
 [project.scripts]
 file-collector = "file_collector.main:main"

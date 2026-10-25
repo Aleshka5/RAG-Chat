@@ -1,7 +1,9 @@
 """Upload, list, content, and delete use cases."""
 
 import hashlib
+import json
 import logging
+import re
 import tempfile
 import uuid
 from typing import BinaryIO
@@ -14,12 +16,20 @@ from file_collector.config import Settings
 from file_collector.errors import (
     ApiError,
     DuplicateActiveFile,
+    ObjectNotFound,
     PublishError,
     StorageError,
 )
 from file_collector.messages import delete_publication, process_publication
 from file_collector.names import content_disposition, safe_name, validated_file_name
 from file_collector.schema import CONTENT_STATUSES, file_card, new_file_document
+
+PDF_CONTENT_TYPE = "application/pdf"
+IMAGE_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_FILES_PREFIX = re.compile(
+    r"^files/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/"
+)
 
 logger = logging.getLogger("file_collector")
 
@@ -132,6 +142,84 @@ async def upload_pdf(
             await form.close()
 
 
+async def accept_manifest(
+    *,
+    request: Request,
+    user_id: str,
+    request_id: str,
+    files,
+    objects,
+    publisher,
+    allowed_types: frozenset[str],
+    pdf_extension: bool,
+) -> dict:
+    """Register an object that is already in the bucket. Bytes are not copied."""
+    payload = await _read_manifest(request)
+    manifest = _validated_manifest(payload, allowed_types)
+    s3_key = manifest["s3_key"]
+    if _foreign_files_prefix(s3_key, user_id):
+        raise ApiError(404, "object_not_found", "Object not found")
+    try:
+        reported_size = await objects.head(s3_key)
+    except ObjectNotFound as exc:
+        raise ApiError(404, "object_not_found", "Object not found") from exc
+    except StorageError as exc:
+        raise ApiError(503, "dependency_unavailable", "Dependency unavailable") from exc
+    if (
+        isinstance(reported_size, int)
+        and not isinstance(reported_size, bool)
+        and reported_size != manifest["file_size"]
+    ):
+        raise ApiError(
+            400,
+            "validation_error",
+            "Invalid request",
+            {"fields": ["file_size"]},
+        )
+    file_name = manifest["file_name"]
+    digest = manifest["content_sha256"]
+    content_type = manifest["content_type"]
+    logger.debug(
+        "manifest sha256 %s length %s",
+        digest,
+        manifest["file_size"],
+        extra={"request_id": request_id, "user_id": user_id},
+    )
+    existing = await _active_duplicate(files, user_id, digest, s3_key)
+    if existing is not None:
+        raise _duplicate(existing["file_id"])
+    file_id = str(uuid.uuid4())
+    document = new_file_document(
+        file_id=file_id,
+        user_id=user_id,
+        file_name=file_name,
+        safe=safe_name(file_name, pdf_extension=pdf_extension),
+        file_size=manifest["file_size"],
+        content_sha256=digest,
+        content_type=content_type,
+        s3_key=s3_key,
+    )
+    try:
+        await files.insert(document)
+    except DuplicateActiveFile as dup:
+        raise _duplicate(dup.file_id) from dup
+    except StorageError as exc:
+        raise ApiError(503, "dependency_unavailable", "Dependency unavailable") from exc
+    await _publish_process(
+        files=files,
+        publisher=publisher,
+        document=document,
+        file_name=file_name,
+        content_type=content_type,
+        request_id=request_id,
+    )
+    logger.info(
+        "file uploaded",
+        extra={"request_id": request_id, "file_id": file_id, "user_id": user_id},
+    )
+    return file_card(document)
+
+
 async def list_pdfs(*, files, user_id: str, limit: int, offset: int) -> dict:
     items, total = await files.list_files(user_id, limit, offset)
     return {
@@ -189,7 +277,13 @@ async def delete_pdf(
     return {"file_id": file_id, "status": "deleting"}
 
 
-async def read_pdf(*, files, objects, user_id: str, file_id: str) -> tuple[bytes, str, int]:
+async def read_pdf(
+    *,
+    files,
+    objects,
+    user_id: str,
+    file_id: str,
+) -> tuple[bytes, str, int, str]:
     document = await files.get(file_id, user_id)
     if document is None or document.get("status") not in CONTENT_STATUSES:
         raise ApiError(404, "file_not_found", "File not found")
@@ -197,7 +291,15 @@ async def read_pdf(*, files, objects, user_id: str, file_id: str) -> tuple[bytes
         payload = await objects.get(document["s3_key"])
     except StorageError as exc:
         raise ApiError(503, "dependency_unavailable", "Dependency unavailable") from exc
-    return payload, content_disposition(document["file_name"]), int(document["file_size"])
+    media_type = document.get("content_type") or "application/pdf"
+    if not isinstance(media_type, str) or media_type == "":
+        media_type = "application/pdf"
+    return (
+        payload,
+        content_disposition(document["file_name"]),
+        int(document["file_size"]),
+        media_type,
+    )
 
 
 async def _owned_visible(files, user_id: str, file_id: str) -> dict:
@@ -205,6 +307,123 @@ async def _owned_visible(files, user_id: str, file_id: str) -> dict:
     if document is None or document.get("status") == "deleted":
         raise ApiError(404, "file_not_found", "File not found")
     return document
+
+
+async def _publish_process(
+    *,
+    files,
+    publisher,
+    document: dict,
+    file_name: str,
+    content_type: str,
+    request_id: str,
+) -> None:
+    file_id = document["file_id"]
+    user_id = document["user_id"]
+    created_at = utcnow()
+    routing_key, body, properties = process_publication(
+        message_id=str(uuid.uuid4()),
+        file_id=file_id,
+        user_id=user_id,
+        s3_key=document["s3_key"],
+        file_name=file_name,
+        created_at=created_at,
+        request_id=request_id,
+        timestamp=int(created_at.timestamp()),
+        content_type=content_type,
+    )
+    try:
+        await publisher.publish(routing_key, body, properties)
+    except PublishError as exc:
+        try:
+            await files.mark_enqueue_failed(file_id, user_id)
+        except StorageError:
+            logger.error(
+                "failed to record enqueue_failed",
+                extra={"request_id": request_id, "file_id": file_id, "user_id": user_id},
+            )
+        raise ApiError(500, "enqueue_failed", "Failed to publish message") from exc
+
+
+async def _active_duplicate(files, user_id: str, digest: str, s3_key: str) -> dict | None:
+    by_key = await files.find_active_by_s3_key(user_id, s3_key)
+    if by_key is not None:
+        return by_key
+    return await files.find_active_by_hash(user_id, digest)
+
+
+def _duplicate(file_id: str) -> ApiError:
+    return ApiError(
+        409,
+        "duplicate_file",
+        "A file with the same content already exists",
+        {"file_id": file_id},
+    )
+
+
+async def _read_manifest(request: Request) -> dict:
+    raw = await request.body()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ApiError(400, "validation_error", "Invalid request") from exc
+    if not isinstance(payload, dict):
+        raise ApiError(400, "validation_error", "Invalid request")
+    return payload
+
+
+def _validated_manifest(payload: dict, allowed_types: frozenset[str]) -> dict:
+    fields: list[str] = []
+    s3_key = payload.get("s3_key")
+    if not _valid_s3_key(s3_key):
+        fields.append("s3_key")
+    file_name = None
+    raw_name = payload.get("file_name")
+    if not isinstance(raw_name, str):
+        fields.append("file_name")
+    else:
+        try:
+            file_name = validated_file_name(raw_name)
+        except ValueError:
+            fields.append("file_name")
+    digest = payload.get("content_sha256")
+    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        fields.append("content_sha256")
+    file_size = payload.get("file_size")
+    if isinstance(file_size, bool) or not isinstance(file_size, int) or file_size < 1:
+        fields.append("file_size")
+    content_type = payload.get("content_type")
+    if not isinstance(content_type, str):
+        fields.append("content_type")
+    if fields:
+        raise ApiError(400, "validation_error", "Invalid request", {"fields": fields})
+    if content_type not in allowed_types:
+        message = (
+            "Only PDF is accepted"
+            if allowed_types == frozenset({PDF_CONTENT_TYPE})
+            else "Only JPEG, PNG, WEBP, and GIF are accepted"
+        )
+        raise ApiError(415, "unsupported_media_type", message)
+    return {
+        "s3_key": s3_key,
+        "file_name": file_name,
+        "content_sha256": digest,
+        "file_size": file_size,
+        "content_type": content_type,
+    }
+
+
+def _valid_s3_key(value: object) -> bool:
+    if not isinstance(value, str) or value == "":
+        return False
+    return not (value.startswith("/") or "\\" in value or ".." in value)
+
+
+def _foreign_files_prefix(s3_key: str, user_id: str) -> bool:
+    match = _FILES_PREFIX.match(s3_key)
+    if match is None:
+        return False
+    return match.group(1).lower() != user_id
 
 
 async def _parse_form(request: Request, limit: int):

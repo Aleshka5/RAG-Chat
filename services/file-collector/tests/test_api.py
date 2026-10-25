@@ -11,6 +11,7 @@ _CARD_KEYS = {
     "file_id",
     "file_name",
     "file_size",
+    "content_type",
     "status",
     "page_count",
     "error",
@@ -56,6 +57,7 @@ def test_health_does_not_touch_dependencies(stack) -> None:
     blocked = client.get("/health", headers={"X-Auth-Role": "BLOCKED"})
     assert blocked.status_code == 200
     assert files.indexes is not None
+    assert any(spec["name"] == "user_id_s3_key_active" for spec in files.indexes)
     assert objects.bucket is True
     assert publisher.topology_ready is True
     assert publisher.connected is True
@@ -124,6 +126,7 @@ def test_upload_stores_metadata_and_publishes_doc_process(stack) -> None:
     assert set(body) == _CARD_KEYS
     assert body["file_name"] == "my report.pdf"
     assert body["file_size"] == len(PDF)
+    assert body["content_type"] == "application/pdf"
     assert body["status"] == "uploaded"
     assert body["page_count"] is None
     assert body["error"] is None
@@ -471,6 +474,502 @@ def test_bad_filename_is_400(stack) -> None:
     nested = upload(client, USER_A, name="../../secret.pdf")
     assert nested.status_code == 202
     assert nested.json()["file_name"] == "secret.pdf"
+
+
+def _manifest(**overrides) -> dict:
+    body = {
+        "s3_key": "incoming/user-photos/a.jpg",
+        "file_name": "a.jpg",
+        "content_sha256": "a" * 64,
+        "file_size": 4,
+        "content_type": "image/jpeg",
+    }
+    body.update(overrides)
+    return body
+
+
+def post_manifest(client, path, user_id, payload, headers=None):
+    merged = auth(user_id)
+    if headers:
+        merged.update(headers)
+    return client.post(path, headers=merged, json=payload)
+
+
+def test_image_manifest_stores_row_and_publishes_without_uploading(stack) -> None:
+    client, files, objects, publisher = stack
+    payload = b"\xff\xd8\xff\xd9"
+    key = "incoming/user-photos/a.jpg"
+    objects.objects[key] = payload
+    request_id = "22222222-2222-4222-8222-222222222222"
+    response = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=key,
+            file_name="фото.jpg",
+            file_size=len(payload),
+            content_sha256="ab" * 32,
+            content_type="image/jpeg",
+        ),
+        headers={"X-Request-Id": request_id},
+    )
+    assert response.status_code == 202
+    assert response.headers["x-request-id"] == request_id
+    body = response.json()
+    assert set(body) == _CARD_KEYS
+    assert body["content_type"] == "image/jpeg"
+    assert body["file_name"] == "фото.jpg"
+    assert body["file_size"] == len(payload)
+    assert body["status"] == "uploaded"
+    assert body["page_count"] is None
+    assert body["error"] is None
+    file_id = body["file_id"]
+    stored = files.docs[file_id]
+    assert stored["s3_key"] == key
+    assert stored["content_sha256"] == "ab" * 32
+    assert stored["file_size"] == len(payload)
+    assert stored["content_type"] == "image/jpeg"
+    assert stored["user_id"] == USER_A
+    assert stored["file_name"] == "фото.jpg"
+    assert stored["safe_name"] == "фото.jpg"
+    assert stored["status"] == "uploaded"
+    assert stored["page_count"] is None
+    assert objects.puts == []
+    assert objects.gets == 0
+    assert objects.deletes == []
+    assert objects.objects[key] == payload
+    routing, message, props = publisher.messages[0]
+    assert routing == "doc.process"
+    assert message["s3_key"] == key
+    assert message["content_type"] == "image/jpeg"
+    assert message["file_id"] == file_id
+    assert message["user_id"] == USER_A
+    assert message["file_name"] == "фото.jpg"
+    assert props["headers"]["x-request-id"] == request_id
+    assert len(publisher.messages) == 1
+
+    for index, (content_type, suffix) in enumerate(
+        (
+            ("image/png", "png"),
+            ("image/webp", "webp"),
+            ("image/gif", "gif"),
+        ),
+        start=1,
+    ):
+        image_key = f"incoming/user-photos/a.{suffix}"
+        objects.objects[image_key] = payload
+        accepted = post_manifest(
+            client,
+            "/api/files/images",
+            USER_A,
+            _manifest(
+                s3_key=image_key,
+                file_name=f"a.{suffix}",
+                content_sha256=f"{index}" * 64,
+                content_type=content_type,
+            ),
+        )
+        assert accepted.status_code == 202
+        assert accepted.json()["content_type"] == content_type
+        assert accepted.json()["page_count"] is None
+        published = publisher.messages[-1][1]
+        assert published["s3_key"] == image_key
+        assert published["content_type"] == content_type
+    assert objects.puts == []
+
+
+def test_document_manifest_accepts_pdf_and_keeps_caller_key(stack) -> None:
+    client, files, objects, publisher = stack
+    payload = b"%PDF-1.7\n"
+    key = f"files/{USER_A.upper()}/batch/notes.pdf"
+    objects.objects[key] = payload
+    response = post_manifest(
+        client,
+        "/api/files/documents",
+        USER_A,
+        _manifest(
+            s3_key=key,
+            file_name="notes.txt",
+            file_size=len(payload),
+            content_sha256="d" * 64,
+            content_type="application/pdf",
+        ),
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["content_type"] == "application/pdf"
+    assert body["file_name"] == "notes.txt"
+    assert body["status"] == "uploaded"
+    assert body["page_count"] is None
+    stored = files.docs[body["file_id"]]
+    assert stored["s3_key"] == key
+    assert stored["safe_name"] == "notes.pdf"
+    assert stored["content_type"] == "application/pdf"
+    assert stored["content_sha256"] == "d" * 64
+    assert stored["user_id"] == USER_A
+    assert objects.puts == []
+    message = publisher.messages[0][1]
+    assert message["content_type"] == "application/pdf"
+    assert message["s3_key"] == key
+    assert message["file_name"] == "notes.txt"
+
+
+def test_document_manifest_rejects_text_and_image_types(stack) -> None:
+    client, files, objects, publisher = stack
+    for content_type in (
+        "text/plain",
+        "image/jpeg",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ):
+        response = post_manifest(
+            client,
+            "/api/files/documents",
+            USER_A,
+            _manifest(content_type=content_type, content_sha256="e" * 64),
+        )
+        assert response.status_code == 415
+        assert response.json()["error"]["code"] == "unsupported_media_type"
+    assert files.docs == {}
+    assert objects.puts == []
+    assert objects.heads == 0
+    assert publisher.messages == []
+
+
+def test_image_manifest_rejects_pdf(stack) -> None:
+    client, files, objects, publisher = stack
+    for content_type in ("application/pdf", "image/jpg", "text/plain"):
+        response = post_manifest(
+            client,
+            "/api/files/images",
+            USER_A,
+            _manifest(content_type=content_type),
+        )
+        assert response.status_code == 415
+        assert response.json()["error"]["code"] == "unsupported_media_type"
+    assert files.docs == {}
+    assert publisher.messages == []
+    assert objects.puts == []
+
+
+def test_manifest_duplicate_hash_or_key_returns_existing_file_and_does_not_publish(stack) -> None:
+    client, files, objects, publisher = stack
+    payload = b"jpeg"
+    first_key = "incoming/user-photos/a.jpg"
+    second_key = "incoming/user-photos/b.jpg"
+    objects.objects[first_key] = payload
+    objects.objects[second_key] = payload
+    digest = "a" * 64
+    first = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=first_key, content_sha256=digest, file_size=len(payload)),
+    )
+    assert first.status_code == 202
+    file_id = first.json()["file_id"]
+    same_hash = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=second_key,
+            file_name="b.jpg",
+            content_sha256=digest,
+            file_size=len(payload),
+        ),
+    )
+    assert same_hash.status_code == 409
+    assert same_hash.json()["error"]["code"] == "duplicate_file"
+    assert same_hash.json()["error"]["details"]["file_id"] == file_id
+    assert len(publisher.messages) == 1
+    assert set(files.docs) == {file_id}
+
+    same_key = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=first_key,
+            file_name="again.jpg",
+            content_sha256="b" * 64,
+            file_size=len(payload),
+        ),
+    )
+    assert same_key.status_code == 409
+    assert same_key.json()["error"]["details"]["file_id"] == file_id
+    assert len(publisher.messages) == 1
+    assert set(files.docs) == {file_id}
+    assert objects.puts == []
+    assert objects.deletes == []
+    assert objects.objects[first_key] == payload
+
+    files.blind_lookups = 2
+    third_key = "incoming/user-photos/c.jpg"
+    objects.objects[third_key] = payload
+    raced = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=third_key,
+            file_name="c.jpg",
+            content_sha256=digest,
+            file_size=len(payload),
+        ),
+    )
+    assert raced.status_code == 409
+    assert raced.json()["error"]["details"]["file_id"] == file_id
+    assert set(files.docs) == {file_id}
+    assert len(publisher.messages) == 1
+    assert objects.deletes == []
+    assert objects.objects[first_key] == payload
+
+    files.docs[file_id]["status"] = "deleted"
+    again = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=first_key, content_sha256=digest, file_size=len(payload)),
+    )
+    assert again.status_code == 202
+    assert again.json()["file_id"] != file_id
+    assert len(publisher.messages) == 2
+
+
+def test_manifest_duplicate_prefers_s3_key_over_a_different_hash_match(stack) -> None:
+    client, files, objects, publisher = stack
+    hash_id = "11111111-1111-4111-8111-111111111111"
+    key_id = "22222222-2222-4222-8222-222222222222"
+    hash_key = "incoming/user-photos/by-hash.jpg"
+    shared_key = "incoming/user-photos/by-key.jpg"
+    objects.objects[shared_key] = b"jpeg"
+    files.docs[hash_id] = {
+        "file_id": hash_id,
+        "user_id": USER_A,
+        "file_name": "hash.jpg",
+        "safe_name": "hash.jpg",
+        "file_size": 4,
+        "content_type": "image/jpeg",
+        "content_sha256": "a" * 64,
+        "s3_key": hash_key,
+        "status": "ready",
+        "page_count": None,
+        "error": None,
+        "delete_claimed_at": None,
+        "created_at": utcnow(),
+        "updated_at": utcnow(),
+    }
+    files.docs[key_id] = {
+        **files.docs[hash_id],
+        "file_id": key_id,
+        "file_name": "key.jpg",
+        "content_sha256": "b" * 64,
+        "s3_key": shared_key,
+    }
+    response = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=shared_key, content_sha256="a" * 64, file_size=4, file_name="again.jpg"),
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["details"]["file_id"] == key_id
+    assert set(files.docs) == {hash_id, key_id}
+    assert publisher.messages == []
+
+    files.blind_lookups = 2
+    raced = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=shared_key, content_sha256="c" * 64, file_size=4, file_name="race.jpg"),
+    )
+    assert raced.status_code == 409
+    assert raced.json()["error"]["details"]["file_id"] == key_id
+    assert set(files.docs) == {hash_id, key_id}
+    assert publisher.messages == []
+
+
+def test_manifest_missing_object_and_foreign_prefix_are_404(stack) -> None:
+    client, files, objects, publisher = stack
+    missing = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key="incoming/user-photos/missing.jpg"),
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "object_not_found"
+    assert "details" not in missing.json()["error"]
+
+    foreign_key = f"files/{USER_B}/photo.jpg"
+    objects.objects[foreign_key] = b"jpeg"
+    foreign = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=foreign_key, file_size=4, content_sha256="c" * 64),
+    )
+    assert foreign.status_code == 404
+    assert foreign.json()["error"]["code"] == "object_not_found"
+    assert files.docs == {}
+    assert publisher.messages == []
+    assert objects.puts == []
+
+
+def test_manifest_size_mismatch_is_400_and_omitted_head_size_is_trusted(stack) -> None:
+    client, files, objects, publisher = stack
+    key = "incoming/user-photos/a.jpg"
+    objects.objects[key] = b"abcd"
+    mismatch = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=key, file_size=12345),
+    )
+    assert mismatch.status_code == 400
+    assert mismatch.json()["error"]["code"] == "validation_error"
+    assert mismatch.json()["error"]["details"]["fields"] == ["file_size"]
+    assert files.docs == {}
+    assert publisher.messages == []
+
+    objects.head_sizes[key] = None
+    trusted = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=key, file_size=12345, content_sha256="9" * 64),
+    )
+    assert trusted.status_code == 202
+    assert trusted.json()["file_size"] == 12345
+    assert files.docs[trusted.json()["file_id"]]["file_size"] == 12345
+
+
+def test_manifest_rejects_unsafe_keys_and_bad_fields(stack) -> None:
+    client, files, objects, publisher = stack
+    objects.objects["incoming/user-photos/a.jpg"] = b"jpeg"
+    cases = (
+        {"s3_key": "/incoming/a.jpg"},
+        {"s3_key": "incoming/../a.jpg"},
+        {"s3_key": "incoming\\a.jpg"},
+        {"s3_key": ""},
+        {"s3_key": "a..b.jpg"},
+        {"file_size": 0},
+        {"file_size": True},
+        {"content_sha256": "A" * 64},
+        {"content_sha256": "ab"},
+        {"file_name": ".."},
+        {"file_name": "a" * 256},
+    )
+    for override in cases:
+        response = post_manifest(client, "/api/files/images", USER_A, _manifest(**override))
+        assert response.status_code == 400, override
+        assert response.json()["error"]["code"] == "validation_error"
+    assert files.docs == {}
+    assert publisher.messages == []
+    assert objects.puts == []
+
+
+def test_image_content_uses_stored_content_type_and_s3_key(stack) -> None:
+    client, files, objects, _publisher = stack
+    payload = b"\xff\xd8\xff\xd9fake-jpeg"
+    key = "incoming/user-photos/a.jpg"
+    objects.objects[key] = payload
+    created = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=key,
+            file_name="a.jpg",
+            file_size=len(payload),
+            content_type="image/png",
+            content_sha256="1" * 64,
+        ),
+    )
+    assert created.status_code == 202
+    file_id = created.json()["file_id"]
+    assert created.json()["content_type"] == "image/png"
+    own = client.get(f"/api/files/{file_id}/content", headers=auth(USER_A))
+    assert own.status_code == 200
+    assert own.headers["content-type"] == "image/png"
+    assert own.content == payload
+    assert own.headers["content-length"] == str(len(payload))
+    card = client.get(f"/api/files/{file_id}", headers=auth(USER_A))
+    assert card.status_code == 200
+    assert card.json()["content_type"] == "image/png"
+    listed = client.get("/api/files", headers=auth(USER_A))
+    assert listed.json()["items"][0]["content_type"] == "image/png"
+    assert files.docs[file_id]["s3_key"] == key
+
+
+def test_file_card_includes_content_type_for_pdf_upload(stack) -> None:
+    client, _files, _objects, _publisher = stack
+    created = upload(client, USER_A)
+    assert created.status_code == 202
+    assert created.json()["content_type"] == "application/pdf"
+    file_id = created.json()["file_id"]
+    card = client.get(f"/api/files/{file_id}", headers=auth(USER_A))
+    assert card.json()["content_type"] == "application/pdf"
+    listed = client.get("/api/files", headers=auth(USER_A))
+    assert listed.json()["items"][0]["content_type"] == "application/pdf"
+
+
+def test_static_file_routes_are_not_parsed_as_file_ids(stack) -> None:
+    client, _files, _objects, _publisher = stack
+    for path in ("/api/files/images", "/api/files/documents"):
+        fetched = client.get(path, headers=auth(USER_A))
+        assert fetched.status_code == 400
+        assert fetched.json()["error"]["details"]["fields"] == ["file_id"]
+        deleted = client.delete(path, headers=auth(USER_A))
+        assert deleted.status_code == 400
+        assert deleted.json()["error"]["details"]["fields"] == ["file_id"]
+    missing = client.get("/api/files/not-a-uuid", headers=auth(USER_A))
+    assert missing.status_code == 400
+    assert missing.json()["error"]["code"] == "validation_error"
+
+
+def test_manifest_auth_matches_other_file_routes(stack) -> None:
+    client, files, objects, publisher = stack
+    objects.objects["incoming/user-photos/a.jpg"] = b"jpeg"
+    anonymous = client.post("/api/files/images", json=_manifest())
+    assert anonymous.status_code == 401
+    assert anonymous.json()["error"]["code"] == "unauthenticated"
+    blocked = post_manifest(
+        client,
+        "/api/files/documents",
+        USER_A,
+        _manifest(content_type="application/pdf"),
+        headers={"X-Auth-Role": "BLOCKED"},
+    )
+    assert blocked.status_code == 403
+    assert files.docs == {}
+    assert publisher.messages == []
+
+
+def test_manifest_publish_failure_marks_enqueue_failed(stack) -> None:
+    client, files, objects, publisher = stack
+    objects.objects["incoming/user-photos/a.jpg"] = b"jpeg"
+    publisher.remaining_failures = 1
+    response = post_manifest(client, "/api/files/images", USER_A, _manifest())
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "enqueue_failed"
+    document = next(iter(files.docs.values()))
+    assert document["status"] == "error"
+    assert document["error"] == "enqueue_failed"
+    assert publisher.messages == []
+
+
+def test_manifest_head_failure_is_503(stack) -> None:
+    client, files, objects, publisher = stack
+    objects.objects["incoming/user-photos/a.jpg"] = b"jpeg"
+    objects.fail_head = True
+    response = post_manifest(client, "/api/files/images", USER_A, _manifest())
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "dependency_unavailable"
+    assert files.docs == {}
+    assert publisher.messages == []
 
 
 def test_content_dependency_failure_is_503(stack) -> None:

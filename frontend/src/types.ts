@@ -23,6 +23,7 @@ export type FileRecord = {
   file_size: number;
   status: FileStatus;
   page_count: number | null;
+  content_type?: string | null;
   error: FileErrorCode | string | null;
   progress: FileProgress | null;
   created_at: string;
@@ -68,11 +69,21 @@ export type Source = {
   score: number;
 };
 
+export type ImageHit = {
+  file_id: string;
+  file_name: string;
+  score: number;
+  content_path: string;
+};
+
+export type SearchMode = "documents" | "images";
+
 export type Message = {
   message_id: string;
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  images?: ImageHit[];
   finish_reason?: "retrieval_only";
   created_at: string;
 };

@@ -7,6 +7,7 @@ from tokenizers import Tokenizer
 
 DEFAULT_TITLE = "Новый чат"
 NOT_FOUND = "Не найдено в документах."
+IMAGES_NOT_FOUND = "Не найдено изображений."
 QUERY_PREFIX = "task: question answering | query: "
 # ggml-org/embeddinggemma-2-GGUF .src_sha PRIMARY. Same revision the processor bakes.
 TOKENIZER_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
@@ -42,6 +43,12 @@ def title_from_question(content: str) -> str:
     if len(collapsed) <= 80:
         return collapsed
     return collapsed[:77] + "..."
+
+
+def images_answer(count: int) -> str:
+    if count < 1:
+        return IMAGES_NOT_FOUND
+    return f"Найдено изображений: {count}."
 
 
 def snippet(text: str) -> str:

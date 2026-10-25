@@ -1,4 +1,4 @@
-import type { Chat, ChatDetails, ChatList } from "../types";
+import type { Chat, ChatDetails, ChatList, SearchMode } from "../types";
 import { apiFetch, apiJson, responseError, StreamBrokenError } from "./client";
 import { consumeSseBuffer, flushSseBuffer, parseChatStreamEvent, type ChatStreamEvent } from "../shared/sse";
 
@@ -72,7 +72,9 @@ export async function streamChatMessage(
   content: string,
   onEvent: (event: ChatStreamEvent) => void,
   signal?: AbortSignal,
+  mode?: SearchMode,
 ): Promise<"done" | "error"> {
+  const payload = mode === "images" ? { content, mode: "images" as const } : { content };
   const response = await apiFetch(`/api/chats/${encodeURIComponent(chatId)}/messages`, {
     method: "POST",
     signal,
@@ -80,7 +82,7 @@ export async function streamChatMessage(
       Accept: "text/event-stream",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) throw await responseError(response);
   return readEventStream(response, onEvent);

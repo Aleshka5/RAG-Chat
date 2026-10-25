@@ -4,14 +4,21 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from chat.cache import QueryVectorCache
 from chat.config import Settings
-from chat.errors import ChatNotFound, DependencyUnavailable, UpstreamFailed, UpstreamTimeout
+from chat.errors import (
+    ChatNotFound,
+    DependencyUnavailable,
+    UpstreamFailed,
+    UpstreamTimeout,
+    ValidationFailed,
+)
 from chat.llm import ProviderUnavailable
 from chat.prompt import PromptSource, build_llm_messages
 from chat.repository import ChatRecord, ChatRepository, FileRecord, MessageRecord, Turn
 from chat.sse import sse
-from chat.textutil import NOT_FOUND, format_dt, snippet, title_from_question
-from chat.vectors import Hit, VectorSearch
+from chat.textutil import NOT_FOUND, format_dt, images_answer, snippet, title_from_question
+from chat.vectors import Hit, ImageHit, VectorSearch
 
 logger = logging.getLogger("chat")
 
@@ -36,6 +43,37 @@ class Source:
         }
 
 
+def _content_path(file_id: str) -> str:
+    return f"/api/files/{file_id}/content"
+
+
+@dataclass(slots=True)
+class ImageMatch:
+    file_id: str
+    file_name: str
+    s3_key: str
+    s3_url: str
+    score: float
+
+    def as_search(self) -> dict[str, object]:
+        return {
+            "file_id": self.file_id,
+            "file_name": self.file_name,
+            "s3_key": self.s3_key,
+            "s3_url": self.s3_url,
+            "score": self.score,
+            "content_path": _content_path(self.file_id),
+        }
+
+    def as_chat(self) -> dict[str, object]:
+        return {
+            "file_id": self.file_id,
+            "file_name": self.file_name,
+            "score": self.score,
+            "content_path": _content_path(self.file_id),
+        }
+
+
 @dataclass(slots=True)
 class AnswerSession:
     chat_id: str
@@ -48,6 +86,7 @@ class AnswerSession:
     handle: object | None = None
     primed: list[str] = field(default_factory=list)
     retrieval_only: bool = False
+    images: list[dict[str, object]] | None = None
 
 
 class ChatService:
@@ -66,6 +105,10 @@ class ChatService:
         self._embedder = embedder
         self._llm = llm
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._image_vectors = QueryVectorCache(
+            settings.image_search_cache_size,
+            float(settings.image_search_cache_ttl_seconds),
+        )
 
     def _now(self) -> datetime:
         value = self._clock()
@@ -99,12 +142,79 @@ class ChatService:
         if not deleted:
             raise ChatNotFound()
 
+    async def search_image_matches(
+        self, *, user_id: str, query: str, limit: int, offset: int, request_id: str
+    ) -> list[ImageMatch]:
+        trimmed = query.strip()
+        vector = await self._embed_image_query(user_id, trimmed, request_id)
+        matches = await self._page_images(user_id, vector, limit, offset)
+        logger.info(
+            "retrieved %s images",
+            len(matches),
+            extra={"request_id": request_id, "user_id": user_id},
+        )
+        return matches
+
+    async def _page_images(
+        self, user_id: str, vector: list[float], limit: int, offset: int
+    ) -> list[ImageMatch]:
+        """Drop foreign and not-ready hits, then apply offset and limit.
+
+        Qdrant is scanned in score order. ``RAG_MIN_SCORE`` drops low scores
+        before they consume a page slot.
+        """
+        skipped = 0
+        chosen: list[ImageMatch] = []
+        qdrant_offset = 0
+        min_score = self._settings.rag_min_score
+        while len(chosen) < limit:
+            request = limit - len(chosen) + (offset - skipped)
+            page = await self._vectors.search_images(user_id, vector, request, qdrant_offset)
+            if page.scanned == 0:
+                break
+            qdrant_offset += page.scanned
+            file_ids = [hit.file_id for hit in page.hits if hit.file_id]
+            files = await self._repo.ready_files(user_id, file_ids) if file_ids else {}
+            for match in select_images(page.hits, files, user_id, min_score):
+                if skipped < offset:
+                    skipped += 1
+                    continue
+                chosen.append(match)
+                if len(chosen) == limit:
+                    break
+            if page.scanned < request:
+                break
+        return chosen
+
+    async def _embed_image_query(self, user_id: str, query: str, request_id: str) -> list[float]:
+        cached = self._image_vectors.get(user_id, query)
+        if cached is not None:
+            return cached
+        vector = await self._embedder.embed_query(query, request_id)
+        self._image_vectors.put(user_id, query, vector)
+        return vector
+
     async def open_answer(
-        self, *, user_id: str, chat_id: str, content: str, request_id: str
+        self,
+        *,
+        user_id: str,
+        chat_id: str,
+        content: str,
+        request_id: str,
+        mode: str = "documents",
     ) -> AnswerSession:
         chat = await self._repo.get_chat(user_id, chat_id)
         if chat is None:
             raise ChatNotFound()
+        if mode == "images":
+            return await self._open_images(
+                user_id=user_id,
+                chat_id=chat_id,
+                content=content,
+                request_id=request_id,
+            )
+        if mode != "documents":
+            raise ValidationFailed(["mode"])
         user_message_id = str(uuid.uuid4())
         assistant_message_id = str(uuid.uuid4())
         log_extra = {
@@ -156,6 +266,29 @@ class ChatService:
         session.primed = [first] if first else []
         return session
 
+    async def _open_images(
+        self, *, user_id: str, chat_id: str, content: str, request_id: str
+    ) -> AnswerSession:
+        user_message_id = str(uuid.uuid4())
+        assistant_message_id = str(uuid.uuid4())
+        matches = await self.search_image_matches(
+            user_id=user_id,
+            query=content,
+            limit=self._settings.rag_top_k,
+            offset=0,
+            request_id=request_id,
+        )
+        return AnswerSession(
+            chat_id=chat_id,
+            user_id=user_id,
+            content=content,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            sources=[],
+            request_id=request_id,
+            images=[match.as_chat() for match in matches],
+        )
+
     async def iter_sse(self, session: AnswerSession) -> AsyncIterator[bytes]:
         """Stream meta, deltas, and done.
 
@@ -166,17 +299,21 @@ class ChatService:
         handle = session.handle if isinstance(session.handle, _LLMHandle) else None
         try:
             payloads = [source.as_dict() for source in session.sources]
-            yield sse(
-                "meta",
-                {
-                    "chat_id": session.chat_id,
-                    "user_message_id": session.user_message_id,
-                    "assistant_message_id": session.assistant_message_id,
-                    "sources": payloads,
-                },
-            )
+            meta: dict[str, object] = {
+                "chat_id": session.chat_id,
+                "user_message_id": session.user_message_id,
+                "assistant_message_id": session.assistant_message_id,
+                "sources": payloads,
+            }
+            if session.images is not None:
+                meta["images"] = session.images
+            yield sse("meta", meta)
             stored_reason: str | None = None
-            if session.retrieval_only:
+            if session.images is not None:
+                text = images_answer(len(session.images))
+                parts.append(text)
+                yield sse("delta", {"content": text})
+            elif session.retrieval_only:
                 stored_reason = "retrieval_only"
             elif handle is None:
                 parts.append(NOT_FOUND)
@@ -202,6 +339,7 @@ class ChatService:
                     assistant_created_at=now + timedelta(milliseconds=1),
                     title=title_from_question(session.content),
                     finish_reason=stored_reason,
+                    images=session.images,
                 )
             )
             yield sse("done", {"finish_reason": stored_reason or "stop"})
@@ -290,6 +428,44 @@ def select_sources(
     return chosen
 
 
+def select_images(
+    hits: list[ImageHit],
+    files: dict[str, FileRecord],
+    user_id: str,
+    min_score: float,
+) -> list[ImageMatch]:
+    chosen: list[ImageMatch] = []
+    for hit in hits:
+        if hit.user_id and hit.user_id != user_id:
+            continue
+        record = files.get(hit.file_id)
+        if record is None or record.user_id != user_id or record.status != "ready":
+            continue
+        if min_score > 0 and hit.score < min_score:
+            continue
+        chosen.append(
+            ImageMatch(
+                file_id=hit.file_id,
+                file_name=hit.file_name,
+                s3_key=hit.s3_key,
+                s3_url=hit.s3_url,
+                score=hit.score,
+            )
+        )
+    chosen.sort(key=lambda item: item.score, reverse=True)
+    return chosen
+
+
+def image_search_payload(matches: list[ImageMatch], limit: int, offset: int) -> dict[str, object]:
+    next_offset = None if len(matches) < limit else offset + limit
+    return {
+        "items": [match.as_search() for match in matches],
+        "limit": limit,
+        "offset": offset,
+        "next_offset": next_offset,
+    }
+
+
 def _prompt_source(source: Source) -> PromptSource:
     return PromptSource(source.file_name, source.page_number, source.text)
 
@@ -312,6 +488,8 @@ def message_payload(message: MessageRecord) -> dict[str, object]:
     }
     if message.role == "assistant":
         body["sources"] = message.sources or []
+        if message.images is not None:
+            body["images"] = message.images
     if message.finish_reason is not None:
         body["finish_reason"] = message.finish_reason
     return body

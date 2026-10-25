@@ -1,7 +1,11 @@
-"""Load the text-only EmbeddingGemma 2 GGUF and wait until llama-server is ready.
+"""Load EmbeddingGemma 2 and wait until llama-server is ready.
 
-The hot path is llama.cpp. PyTorch is not used. Image and audio projectors
-are not downloaded and are not passed to the server.
+The hot path is llama.cpp. PyTorch is not used. The text GGUF and the vision
+projector (``EMBEDDING_MMPROJ``) come from the same pinned repo. When the
+projector file is present, llama-server receives ``--mmproj``. A missing
+projector does not stop text embeddings or ``/health``; ``POST /embed/image``
+then fails upstream. Float16 weights are rejected by configuration. A separate
+audio projector is not downloaded and is not passed to the server.
 """
 
 import logging
@@ -39,7 +43,7 @@ class LoadedModel:
 
 
 def load_model(settings: Settings) -> LoadedModel:
-    """Download the pinned text GGUF, start llama-server, and block until it is healthy."""
+    """Download the pinned text GGUF and vision projector, then wait until llama-server is healthy."""
     log.info("loading embedding model %s", settings.model)
     try:
         tokenizer_path = download_tokenizer()
@@ -51,16 +55,23 @@ def load_model(settings: Settings) -> LoadedModel:
         log.error("failed to download embedding weights")
         raise ModelLoadError("failed to download embedding weights") from exc
 
+    mmproj_path = _download_mmproj(settings.mmproj)
+    images_ready = mmproj_path is not None
+
     if _llama_is_healthy(settings.llama_url, timeout=2.0):
         log.info("llama-server is already healthy at %s", settings.llama_url)
-        encoder = LlamaEncoder(settings.llama_url, settings.timeout_seconds)
+        encoder = LlamaEncoder(
+            settings.llama_url,
+            settings.timeout_seconds,
+            images_ready=images_ready,
+        )
         return LoadedModel(encoder=encoder, token_counter=token_counter)
 
     binary = shutil.which("llama-server")
     if binary is None:
         log.error("llama-server is not on PATH")
         raise ModelLoadError("llama-server is not on PATH")
-    command = build_llama_server_command(settings, model_path, binary)
+    command = build_llama_server_command(settings, model_path, binary, mmproj_path)
     log.info("starting llama-server")
     process = subprocess.Popen(command)
     try:
@@ -68,14 +79,24 @@ def load_model(settings: Settings) -> LoadedModel:
     except Exception:
         _stop_process(process)
         raise
-    encoder = LlamaEncoder(settings.llama_url, settings.timeout_seconds, process=process)
+    encoder = LlamaEncoder(
+        settings.llama_url,
+        settings.timeout_seconds,
+        process=process,
+        images_ready=images_ready,
+    )
     log.info("embedding model is ready")
     return LoadedModel(encoder=encoder, token_counter=token_counter)
 
 
-def build_llama_server_command(settings: Settings, model_path: Path, binary: str) -> list[str]:
+def build_llama_server_command(
+    settings: Settings,
+    model_path: Path,
+    binary: str,
+    mmproj_path: Path | None,
+) -> list[str]:
     context = str(settings.context)
-    return [
+    command = [
         binary,
         "--host",
         settings.llama_host,
@@ -87,21 +108,36 @@ def build_llama_server_command(settings: Settings, model_path: Path, binary: str
         str(settings.ngl),
         "--model",
         str(model_path),
-        "--embeddings",
-        "--pooling",
-        "mean",
-        "--ctx-size",
-        context,
-        "--batch-size",
-        context,
-        "--ubatch-size",
-        context,
-        "--parallel",
-        "1",
-        "--no-mmproj",
-        "--embd-normalize",
-        "2",
     ]
+    if mmproj_path is not None:
+        command.extend(["--mmproj", str(mmproj_path)])
+    command.extend(
+        [
+            "--embeddings",
+            "--pooling",
+            "mean",
+            "--ctx-size",
+            context,
+            "--batch-size",
+            context,
+            "--ubatch-size",
+            context,
+            "--parallel",
+            "1",
+            "--embd-normalize",
+            "2",
+        ]
+    )
+    return command
+
+
+def _download_mmproj(filename: str) -> Path | None:
+    """Vision projector. A missing file leaves text embeddings running."""
+    try:
+        return download_gguf(filename)
+    except Exception:
+        log.error("failed to download EMBEDDING_MMPROJ")
+        return None
 
 
 def download_gguf(filename: str) -> Path:
@@ -113,7 +149,9 @@ def download_gguf(filename: str) -> Path:
         )
     )
     if not path.is_file():
-        raise ModelLoadError("failed to download EMBEDDING_GGUF")
+        parts = filename.lower().replace(".", "-").split("-")
+        label = "EMBEDDING_MMPROJ" if "mmproj" in parts else "EMBEDDING_GGUF"
+        raise ModelLoadError(f"failed to download {label}")
     return path
 
 

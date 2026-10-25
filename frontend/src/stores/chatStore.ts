@@ -10,7 +10,7 @@ import {
   type TurnMessage,
 } from "../shared/chatTurn";
 import { requestErrorLabel } from "../shared/labels";
-import type { Chat } from "../types";
+import type { Chat, SearchMode } from "../types";
 
 export const CHATS_PAGE_LIMIT = 50;
 
@@ -31,8 +31,8 @@ type ChatState = {
   openChat: (chatId: string) => Promise<void>;
   create: () => Promise<string>;
   remove: (chatId: string) => Promise<void>;
-  send: (content: string) => Promise<void>;
-  retry: (content: string) => Promise<void>;
+  send: (content: string, mode?: SearchMode) => Promise<void>;
+  retry: (content: string, mode?: SearchMode) => Promise<void>;
   closeChat: () => void;
 };
 
@@ -149,7 +149,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messagesPhase: state.activeId === chatId ? "idle" : state.messagesPhase,
     }));
   },
-  send: async (raw) => {
+  send: async (raw, mode) => {
     const content = raw.trim();
     const chatId = get().activeId;
     if (!chatId || get().sending) return;
@@ -158,7 +158,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const controller = new AbortController();
     streamAbort = controller;
     const tempUserId = `local-${crypto.randomUUID()}`;
-    let turn = startTurn(get().messages, content, new Date().toISOString(), tempUserId);
+    let turn = startTurn(get().messages, content, new Date().toISOString(), tempUserId, mode);
     set({ messages: turn.messages, sending: true, messagesPhase: "ready", messagesError: null });
     try {
       const outcome = await streamChatMessage(
@@ -170,6 +170,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           set({ messages: turn.messages });
         },
         controller.signal,
+        mode,
       );
       if (controller.signal.aborted || get().activeId !== chatId) return;
       if (outcome === "error") {
@@ -207,9 +208,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ messages: turn.messages, sending: false });
     }
   },
-  retry: async (content) => {
+  retry: async (content, mode) => {
     set((state) => ({ messages: dropFailedMessages(state.messages) }));
-    await get().send(content);
+    await get().send(content, mode);
   },
   closeChat: () => {
     stopStream();

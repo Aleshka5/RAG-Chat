@@ -82,6 +82,12 @@ def test_service_timeout_defaults_and_override() -> None:
     assert processor["EMBEDDING_TIMEOUT"] == 30
     assert processor["EMBEDDING_BATCH_SIZE"] == 16
     assert processor["QDRANT_COLLECTION"] == "documents"
+    assert processor["QDRANT_IMAGES_COLLECTION"] == "images"
+    assert processor["EMBEDDING_MAX_IMAGES"] == 4
+    assert processor["EMBEDDING_MAX_IMAGE_BYTES"] == 10485760
+    assert processor["IMAGE_SEARCH_CACHE_TTL_SECONDS"] == 60
+    assert processor["IMAGE_SEARCH_CACHE_SIZE"] == 256
+    assert processor["EMBEDDING_MMPROJ"] == "mmproj-embeddinggemma-2-Q8_0.gguf"
     assert processor["RABBITMQ_EXCHANGE"] == "doc_events"
 
     overridden = load_service_config(

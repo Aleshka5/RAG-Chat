@@ -14,7 +14,7 @@ FILE_PAGES = "file_pages"
 CHATS = "chats"
 MESSAGES = "messages"
 
-# Partial unique hash ignores status=deleted so the same bytes can be uploaded again.
+# Partial unique indexes ignore status=deleted so the same bytes or s3_key can be stored again.
 ACTIVE_FILE_STATUSES = (
     "uploaded",
     "processing",
@@ -29,6 +29,7 @@ class IndexSpec:
     keys: tuple[tuple[str, int], ...]
     unique: bool = False
     partial_filter_expression: dict[str, Any] | None = None
+    name: str | None = None
 
     def create(self, collection: Any) -> None:
         kwargs: dict[str, Any] = {}
@@ -36,22 +37,37 @@ class IndexSpec:
             kwargs["unique"] = True
         if self.partial_filter_expression is not None:
             kwargs["partialFilterExpression"] = self.partial_filter_expression
+        # Names match indexes already created by the services. A second name for
+        # the same keys makes MongoDB reject startup.
+        if self.name is not None:
+            kwargs["name"] = self.name
         collection.create_index(list(self.keys), **kwargs)
 
 
 FILES_INDEXES: tuple[IndexSpec, ...] = (
-    IndexSpec((("file_id", 1),), unique=True),
-    IndexSpec((("user_id", 1), ("status", 1))),
-    IndexSpec((("user_id", 1), ("created_at", -1))),
+    IndexSpec((("file_id", 1),), unique=True, name="file_id_unique"),
+    IndexSpec((("user_id", 1), ("status", 1)), name="user_id_status"),
+    IndexSpec((("user_id", 1), ("created_at", -1)), name="user_id_created_at"),
     IndexSpec(
         (("user_id", 1), ("content_sha256", 1)),
         unique=True,
+        name="user_id_content_sha256_active",
+        partial_filter_expression={"status": {"$in": list(ACTIVE_FILE_STATUSES)}},
+    ),
+    IndexSpec(
+        (("user_id", 1), ("s3_key", 1)),
+        unique=True,
+        name="user_id_s3_key_active",
         partial_filter_expression={"status": {"$in": list(ACTIVE_FILE_STATUSES)}},
     ),
 )
 
 FILE_PAGES_INDEXES: tuple[IndexSpec, ...] = (
-    IndexSpec((("file_id", 1), ("page_number", 1)), unique=True),
+    IndexSpec(
+        (("file_id", 1), ("page_number", 1)),
+        unique=True,
+        name="file_id_page_number",
+    ),
 )
 
 CHATS_INDEXES: tuple[IndexSpec, ...] = (

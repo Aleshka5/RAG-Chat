@@ -1,4 +1,4 @@
-import type { Source } from "../types";
+import type { ImageHit, Source } from "../types";
 
 export type SseEvent = {
   event: string;
@@ -12,6 +12,7 @@ export type ChatStreamEvent =
       user_message_id: string;
       assistant_message_id: string;
       sources: Source[];
+      images: ImageHit[];
     }
   | { type: "delta"; content: string }
   | { type: "done"; finish_reason: string }
@@ -80,6 +81,22 @@ function readSources(value: unknown): Source[] {
   });
 }
 
+function readImages(value: unknown): ImageHit[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const image = asRecord(item);
+    if (!image) throw new Error("Invalid image");
+    const fileId = requiredString(image, "file_id");
+    const contentPath = typeof image.content_path === "string" ? image.content_path : "";
+    return {
+      file_id: fileId,
+      file_name: requiredString(image, "file_name"),
+      score: typeof image.score === "number" ? image.score : 0,
+      content_path: contentPath,
+    };
+  });
+}
+
 function requiredString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value !== "string" || value.length === 0) {
@@ -115,6 +132,7 @@ export function parseChatStreamEvent(raw: SseEvent): ChatStreamEvent | null {
       user_message_id: requiredString(record, "user_message_id"),
       assistant_message_id: requiredString(record, "assistant_message_id"),
       sources: readSources(record.sources),
+      images: readImages(record.images),
     };
   }
   if (raw.event === "delta") {

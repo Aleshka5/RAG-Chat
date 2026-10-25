@@ -33,6 +33,7 @@ def make_settings(**overrides: object) -> Settings:
         "mongodb_uri": "mongodb://localhost:27017/rag",
         "qdrant_url": "http://qdrant:6333",
         "qdrant_collection": "documents",
+        "qdrant_images_collection": "images",
         "embedding_url": "http://embedding:8091",
         "llm_base_url": "http://llm:4000/v1",
         "llm_api_key": "test-key",
@@ -40,6 +41,8 @@ def make_settings(**overrides: object) -> Settings:
         "llm_temperature": 0.2,
         "llm_timeout_seconds": 60.0,
         "rag_top_k": 5,
+        "image_search_cache_ttl_seconds": 60,
+        "image_search_cache_size": 256,
         "rag_min_score": 0.0,
         "rag_context_messages": 10,
         "embedding_timeout": 10.0,
@@ -101,6 +104,29 @@ class World:
                 text=text,
                 page_number=page_number,
                 chunk_index=chunk_index,
+                score=score,
+            )
+        )
+
+    def add_image(
+        self,
+        *,
+        user_id: str,
+        file_id: str,
+        file_name: str,
+        s3_key: str,
+        s3_url: str,
+        score: float = 0.9,
+    ) -> None:
+        from tests.memory import StoredImage
+
+        self.vectors.images.append(
+            StoredImage(
+                user_id=user_id,
+                file_id=file_id,
+                file_name=file_name,
+                s3_key=s3_key,
+                s3_url=s3_url,
                 score=score,
             )
         )

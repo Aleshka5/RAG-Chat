@@ -317,4 +317,226 @@ describe("ChatPage", () => {
     expect(second.closest("li")?.classList.contains("is-armed")).toBe(true);
     expect(second.getAttribute("aria-current")).toBeNull();
   });
+
+  it("sends documents mode without a mode field and still renders source cards", async () => {
+    const source = {
+      file_id: "6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f",
+      file_name: "Отчёт.pdf",
+      page_number: 5,
+      chunk_index: 1,
+      snippet: "Срок годности",
+      score: 0.8,
+    };
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          bodies.push(String(init.body));
+          return new Response(messageStream("Ответ из документов.", [source]), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        if (url.startsWith("/api/chats?")) {
+          return Response.json({ items: [chat], limit: 50, offset: 0, total: 1 });
+        }
+        if (url.startsWith(`/api/chats/${chat.chat_id}`)) {
+          return Response.json({
+            ...chat,
+            messages: [
+              {
+                message_id: "22222222-2222-4222-8222-222222222222",
+                role: "assistant",
+                content: "Ответ из документов.",
+                sources: [source],
+                created_at: "2026-10-18T20:01:02Z",
+              },
+            ],
+            limit: 200,
+            offset: 0,
+            total_messages: 1,
+          });
+        }
+        throw new Error(url);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={[`/chat/${chat.chat_id}`]}>
+        <Routes>
+          <Route path="/chat/:chatId" element={<ChatPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Page 5")).toBeTruthy();
+    expect(screen.getByText("Отчёт.pdf")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open" }).getAttribute("href")).toBe(
+      "/files/6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f?page=5",
+    );
+    expect(document.querySelector(".image-hit")).toBeNull();
+    expect(screen.getByRole("button", { name: "Documents" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Каков срок годности?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => {
+      expect(bodies.length).toBeGreaterThan(0);
+    });
+    expect(JSON.parse(bodies[0] ?? "{}")).toEqual({ content: "Каков срок годности?" });
+    expect(screen.getByText("Page 5")).toBeTruthy();
+    expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("sends image search mode and renders image hits from a reloaded chat", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:image-hit");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const image = {
+      file_id: "6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f",
+      file_name: "a.jpg",
+      score: 0.77,
+      content_path: "/api/files/6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f/content",
+    };
+    const bodies: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        bodies.push(String(init.body));
+        return new Response(messageStream("Найдено изображений: 1.", [], [image]), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (url.endsWith("/content")) {
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff]), {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        });
+      }
+      if (url.startsWith("/api/chats?")) {
+        return Response.json({ items: [chat], limit: 50, offset: 0, total: 1 });
+      }
+      if (url.startsWith(`/api/chats/${chat.chat_id}`)) {
+        return Response.json({
+          ...chat,
+          messages: [
+            {
+              message_id: "22222222-2222-4222-8222-222222222222",
+              role: "assistant",
+              content: "Найдено изображений: 1.",
+              sources: [],
+              images: [image],
+              created_at: "2026-10-18T20:01:02Z",
+            },
+          ],
+          limit: 200,
+          offset: 0,
+          total_messages: 1,
+        });
+      }
+      throw new Error(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(
+      <MemoryRouter initialEntries={[`/chat/${chat.chat_id}`]}>
+        <Routes>
+          <Route path="/chat/:chatId" element={<ChatPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Найдено изображений: 1.")).toBeTruthy();
+    expect(screen.getByText("a.jpg")).toBeTruthy();
+    expect(screen.getByText("Score 0.77")).toBeTruthy();
+    const thumb = await waitFor(() => {
+      const img = document.querySelector(".image-hit img");
+      expect(img).toBeTruthy();
+      return img as HTMLImageElement;
+    });
+    expect(thumb.getAttribute("src")).toBe("blob:image-hit");
+    expect(thumb.getAttribute("src")).not.toContain("/api/files/");
+    expect(screen.queryByText(/Page /)).toBeNull();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]) === image.content_path)).toBe(true);
+    expect(createObjectURL).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Images" }));
+    expect(screen.getByRole("button", { name: "Images" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByPlaceholderText("Search images")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "схема узла" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => {
+      expect(bodies.length).toBeGreaterThan(0);
+    });
+    expect(JSON.parse(bodies[0] ?? "{}")).toEqual({ content: "схема узла", mode: "images" });
+
+    view.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:image-hit");
+  });
+
+  it("shows an empty image result without a thumbnail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/chats?")) {
+          return Response.json({ items: [chat], limit: 50, offset: 0, total: 1 });
+        }
+        if (url.startsWith(`/api/chats/${chat.chat_id}`)) {
+          return Response.json({
+            ...chat,
+            messages: [
+              {
+                message_id: "22222222-2222-4222-8222-222222222222",
+                role: "assistant",
+                content: "Не найдено изображений.",
+                sources: [],
+                images: [],
+                created_at: "2026-10-18T20:01:02Z",
+              },
+            ],
+            limit: 200,
+            offset: 0,
+            total_messages: 1,
+          });
+        }
+        throw new Error(url);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={[`/chat/${chat.chat_id}`]}>
+        <Routes>
+          <Route path="/chat/:chatId" element={<ChatPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Не найдено изображений.")).toBeTruthy();
+    expect(document.querySelector("img")).toBeNull();
+    expect(document.querySelector(".image-hit")).toBeNull();
+  });
 });
+
+function messageStream(text: string, sources: unknown[], images?: unknown[]): string {
+  const meta: Record<string, unknown> = {
+    chat_id: chat.chat_id,
+    user_message_id: "33333333-3333-4333-8333-333333333333",
+    assistant_message_id: "44444444-4444-4444-8444-444444444444",
+    sources,
+  };
+  if (images) meta.images = images;
+  return [
+    "event: meta",
+    `data: ${JSON.stringify(meta)}`,
+    "",
+    "event: delta",
+    `data: ${JSON.stringify({ content: text })}`,
+    "",
+    "event: done",
+    'data: {"finish_reason":"stop"}',
+    "",
+    "",
+  ].join("\n");
+}

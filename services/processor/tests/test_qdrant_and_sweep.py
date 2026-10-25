@@ -15,47 +15,60 @@ from processor.timeutil import format_z
 
 class RawQdrant:
     def __init__(self, *, exists: bool, size: int) -> None:
-        self.exists = exists
+        self.initial_exists = exists
         self.size = size
-        self.created = None
+        self.created: list[dict] = []
         self.indexes: list[dict] = []
-        self.payload_schema: dict[str, object] = {}
+        self.payload_schema: dict[str, dict[str, object]] = {}
+        self.known: set[str] = set()
 
     def collection_exists(self, collection_name: str) -> bool:
-        return self.exists
+        if collection_name in self.known:
+            return True
+        return self.initial_exists
 
     def create_collection(self, **kwargs) -> None:
-        self.created = kwargs
-        self.exists = True
+        self.created.append(kwargs)
+        self.known.add(kwargs["collection_name"])
 
     def get_collection(self, collection_name: str):
         return SimpleNamespace(
             config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=self.size))),
-            payload_schema=dict(self.payload_schema),
+            payload_schema=dict(self.payload_schema.get(collection_name, {})),
         )
 
     def create_payload_index(self, **kwargs) -> None:
         self.indexes.append(kwargs)
-        self.payload_schema[kwargs["field_name"]] = True
+        self.payload_schema.setdefault(kwargs["collection_name"], {})[kwargs["field_name"]] = True
+
+
+def _index_by_collection(raw: RawQdrant) -> dict[str, dict]:
+    by_collection: dict[str, dict] = {}
+    for item in raw.indexes:
+        by_collection.setdefault(item["collection_name"], {})[item["field_name"]] = item["field_schema"]
+    return by_collection
 
 
 def test_collection_is_created_with_tenant_index() -> None:
     raw = RawQdrant(exists=False, size=768)
     store = QdrantStore(make_settings(embedding_dim=768), client=raw, sleeper=lambda _s: None)
     store.ensure_collection()
-    assert raw.created["collection_name"] == "documents"
-    assert raw.created["vectors_config"].size == 768
-    assert raw.created["vectors_config"].distance == models.Distance.COSINE
-    assert raw.created["hnsw_config"].m == 0
-    assert raw.created["hnsw_config"].payload_m == 16
-    by_field = {item["field_name"]: item["field_schema"] for item in raw.indexes}
-    assert by_field["user_id"].is_tenant is True
-    assert by_field["user_id"].type == models.KeywordIndexType.KEYWORD
-    assert by_field["document_id"].type == models.KeywordIndexType.KEYWORD
-    raw.created = None
+    assert [item["collection_name"] for item in raw.created] == ["documents", "images"]
+    for created in raw.created:
+        assert created["vectors_config"].size == 768
+        assert created["vectors_config"].distance == models.Distance.COSINE
+        assert created["hnsw_config"].m == 0
+        assert created["hnsw_config"].payload_m == 16
+    by_collection = _index_by_collection(raw)
+    assert set(by_collection) == {"documents", "images"}
+    for schema in by_collection.values():
+        assert schema["user_id"].is_tenant is True
+        assert schema["user_id"].type == models.KeywordIndexType.KEYWORD
+        assert schema["document_id"].type == models.KeywordIndexType.KEYWORD
+    raw.created.clear()
     raw.indexes.clear()
     store.ensure_collection()
-    assert raw.created is None
+    assert raw.created == []
     assert raw.indexes == []
 
 
@@ -64,7 +77,36 @@ def test_wrong_dimension_refuses_to_start() -> None:
     store = QdrantStore(make_settings(embedding_dim=768), client=raw, sleeper=lambda _s: None)
     with pytest.raises(SystemExit):
         store.ensure_collection()
-    assert raw.created is None
+    assert raw.created == []
+
+
+class RecordingQdrant:
+    def __init__(self) -> None:
+        self.upserts: list[dict] = []
+        self.deletes: list[dict] = []
+
+    def upsert(self, **kwargs) -> None:
+        self.upserts.append(kwargs)
+
+    def delete(self, **kwargs) -> None:
+        self.deletes.append(kwargs)
+
+
+def test_image_upsert_and_delete_use_the_images_collection() -> None:
+    raw = RecordingQdrant()
+    settings = make_settings(qdrant_images_collection="images")
+    store = QdrantStore(settings, client=raw, sleeper=lambda _s: None)
+    store.upsert_points([{"id": "doc", "vector": [0.1] * settings.embedding_dim, "payload": {"text": "a"}}])
+    store.upsert_images([{"id": "img", "vector": [0.2] * settings.embedding_dim, "payload": {"file_id": "file-1"}}])
+    store.delete_file("user-1", "file-1")
+    store.delete_image("user-1", "file-1")
+    assert [item["collection_name"] for item in raw.upserts] == ["documents", "images"]
+    assert [item["collection_name"] for item in raw.deletes] == ["documents", "images"]
+    image_filter = raw.deletes[1]["points_selector"].filter
+    assert [item.key for item in image_filter.must] == ["user_id", "document_id"]
+    assert image_filter.must[0].match.value == "user-1"
+    assert image_filter.must[1].match.value == "file-1"
+    assert raw.upserts[1]["points"][0].payload == {"file_id": "file-1"}
 
 
 class Publisher:

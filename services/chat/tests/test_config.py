@@ -4,9 +4,11 @@ import pytest
 
 from chat.config import ConfigError, load_settings
 from chat.textutil import (
+    IMAGES_NOT_FOUND,
     NOT_FOUND,
     QUERY_PREFIX,
     estimate_tokens,
+    images_answer,
     snippet,
     title_from_question,
     truncate_query,
@@ -29,6 +31,16 @@ def test_missing_variable_exits_without_logging_secrets(monkeypatch, caplog):
         with pytest.raises(ConfigError):
             load_settings()
     assert "LLM_API_KEY" in caplog.text
+    assert "super-secret-value" not in caplog.text
+
+
+def test_invalid_image_cache_size_exits_without_logging_the_key(monkeypatch, caplog):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("IMAGE_SEARCH_CACHE_SIZE", "0")
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ConfigError):
+            load_settings()
+    assert "IMAGE_SEARCH_CACHE_SIZE" in caplog.text
     assert "super-secret-value" not in caplog.text
 
 
@@ -59,6 +71,9 @@ def test_defaults_and_trailing_slash(monkeypatch):
     assert settings.embedding_url == "http://embedding:8091"
     assert settings.qdrant_url == "http://qdrant:6333"
     assert settings.qdrant_collection == "documents"
+    assert settings.qdrant_images_collection == "images"
+    assert settings.image_search_cache_ttl_seconds == 60
+    assert settings.image_search_cache_size == 256
 
 
 def test_title_snippet_and_token_budget():
@@ -72,3 +87,6 @@ def test_title_snippet_and_token_budget():
     assert len(trimmed) < len(question)
     assert estimate_tokens(QUERY_PREFIX + trimmed) <= 1024
     assert NOT_FOUND == "Не найдено в документах."
+    assert IMAGES_NOT_FOUND == "Не найдено изображений."
+    assert images_answer(0) == IMAGES_NOT_FOUND
+    assert images_answer(2) == "Найдено изображений: 2."

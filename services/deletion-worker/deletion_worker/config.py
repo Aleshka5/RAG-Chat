@@ -26,6 +26,7 @@ class Settings:
     s3_region: str
     qdrant_url: str
     qdrant_collection: str
+    qdrant_images_collection: str
     rabbitmq_url: str
     rabbitmq_exchange: str
     rabbitmq_dlx: str
@@ -58,6 +59,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         s3_region=env.get("S3_REGION", "us-east-1").strip() or "us-east-1",
         qdrant_url=env["QDRANT_URL"],
         qdrant_collection=env.get("QDRANT_COLLECTION", "documents").strip() or "documents",
+        qdrant_images_collection=env.get("QDRANT_IMAGES_COLLECTION", "images").strip() or "images",
         rabbitmq_url=env["RABBITMQ_URL"],
         rabbitmq_exchange=env.get("RABBITMQ_EXCHANGE", "doc_events").strip() or "doc_events",
         rabbitmq_dlx=env.get("RABBITMQ_DLX", "doc_events_dlq").strip() or "doc_events_dlq",

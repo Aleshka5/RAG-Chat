@@ -668,3 +668,303 @@ async def test_message_validation_and_pagination(api):
     assert chats.json()["total"] == 1
     assert len(chats.json()["items"]) == 1
     assert chats.json()["items"][0]["chat_id"] == chat_id
+
+
+LOW_IMAGE = "11111111-1111-4111-8111-111111111112"
+HIGH_IMAGE = "11111111-1111-4111-8111-111111111113"
+MID_IMAGE = "11111111-1111-4111-8111-111111111114"
+PENDING_IMAGE = "cccccccc-dddd-4eee-8fff-000000000001"
+
+
+def _add_image(
+    world: World, file_id: str, file_name: str, score: float, user_id: str = USER_A
+) -> None:
+    world.add_image(
+        user_id=user_id,
+        file_id=file_id,
+        file_name=file_name,
+        s3_key=file_name,
+        s3_url=f"s3://bucket/{file_name}",
+        score=score,
+    )
+
+
+async def test_image_search_embeds_once_for_the_same_user_and_query(api):
+    client, world = api
+    world.add_file(user_id=USER_A, file_id=FILE_A, file_name="a.jpg", status="processing")
+    _add_image(world, FILE_A, "a.jpg", 0.77)
+    headers = auth(USER_A)
+
+    missing = await client.get("/api/chats/image-search", params={"q": "кот"})
+    assert missing.status_code == 401
+
+    first = await client.get("/api/chats/image-search", params={"q": "  кот  "}, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["items"] == []
+    assert len(world.transport.embed_requests) == 1
+    assert world.transport.embed_requests[0].url.path == "/embed"
+    assert world.transport.embed_body() == {"texts": ["кот"], "input_type": "query"}
+
+    world.repo.files[0].status = "ready"
+    second = await client.get("/api/chats/image-search", params={"q": "кот"}, headers=headers)
+    assert second.status_code == 200
+    body = second.json()
+    assert len(world.transport.embed_requests) == 1
+    assert len(world.vectors.calls) == 2
+    assert all(call["collection"] == "images" for call in world.vectors.calls)
+    assert body["items"] == [
+        {
+            "file_id": FILE_A,
+            "file_name": "a.jpg",
+            "s3_key": "a.jpg",
+            "s3_url": "s3://bucket/a.jpg",
+            "score": 0.77,
+            "content_path": f"/api/files/{FILE_A}/content",
+        }
+    ]
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    assert body["next_offset"] is None
+
+    third = await client.get("/api/chats/image-search", params={"q": "пёс"}, headers=headers)
+    assert third.status_code == 200
+    assert len(world.transport.embed_requests) == 2
+    assert world.transport.embed_body(1) == {"texts": ["пёс"], "input_type": "query"}
+
+    other_user = await client.get(
+        "/api/chats/image-search", params={"q": "кот"}, headers=auth(USER_B)
+    )
+    assert other_user.status_code == 200
+    assert other_user.json()["items"] == []
+    assert len(world.transport.embed_requests) == 3
+
+
+async def test_image_search_pagination_next_offset_null_on_short_page(api):
+    client, world = api
+    for file_id, name, score in (
+        (LOW_IMAGE, "low.jpg", 0.2),
+        (HIGH_IMAGE, "high.jpg", 0.9),
+        (MID_IMAGE, "mid.jpg", 0.4),
+    ):
+        world.add_file(user_id=USER_A, file_id=file_id, file_name=name)
+        _add_image(world, file_id, name, score)
+    headers = auth(USER_A)
+    first = await client.get(
+        "/api/chats/image-search",
+        params={"q": "кот", "limit": 2, "offset": 0},
+        headers=headers,
+    )
+    assert first.status_code == 200
+    page = first.json()
+    assert page["limit"] == 2
+    assert page["offset"] == 0
+    assert [item["file_id"] for item in page["items"]] == [HIGH_IMAGE, MID_IMAGE]
+    assert [item["score"] for item in page["items"]] == [0.9, 0.4]
+    assert page["next_offset"] == 2
+    assert "total" not in page
+
+    second = await client.get(
+        "/api/chats/image-search",
+        params={"q": "кот", "limit": 2, "offset": 2},
+        headers=headers,
+    )
+    short = second.json()
+    assert short["limit"] == 2
+    assert short["offset"] == 2
+    assert [item["file_id"] for item in short["items"]] == [LOW_IMAGE]
+    assert short["next_offset"] is None
+    assert "total" not in short
+    assert len(world.transport.embed_requests) == 1
+
+
+async def test_image_search_drops_other_users_and_not_ready_files(api):
+    client, world = api
+    world.add_file(user_id=USER_A, file_id=FILE_A, file_name="a.jpg")
+    world.add_file(
+        user_id=USER_A, file_id=PENDING_IMAGE, file_name="pending.jpg", status="processing"
+    )
+    world.add_file(user_id=USER_B, file_id=FILE_B, file_name="b.jpg")
+    _add_image(world, FILE_A, "a.jpg", 0.5)
+    _add_image(world, PENDING_IMAGE, "pending.jpg", 0.99)
+    _add_image(world, FILE_B, "b.jpg", 0.95, user_id=USER_B)
+    _add_image(world, FILE_B, "b.jpg", 0.88)
+    response = await client.get(
+        "/api/chats/image-search",
+        params={"q": "кот", "limit": 1},
+        headers=auth(USER_A),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["file_id"] for item in body["items"]] == [FILE_A]
+    assert body["items"][0]["s3_key"] == "a.jpg"
+    assert body["items"][0]["s3_url"] == "s3://bucket/a.jpg"
+    assert body["next_offset"] == 1
+    nxt = await client.get(
+        "/api/chats/image-search",
+        params={"q": "кот", "limit": 1, "offset": 1},
+        headers=auth(USER_A),
+    )
+    assert nxt.json()["items"] == []
+    assert nxt.json()["next_offset"] is None
+    assert len(world.transport.embed_requests) == 1
+
+
+async def test_image_search_validation(api):
+    client, world = api
+    headers = auth(USER_A)
+    missing_q = await client.get("/api/chats/image-search", headers=headers)
+    assert missing_q.status_code == 400
+    assert missing_q.json()["error"]["code"] == "validation_error"
+    assert missing_q.json()["error"]["details"]["fields"] == ["q"]
+
+    blank = await client.get("/api/chats/image-search", params={"q": "   "}, headers=headers)
+    assert blank.status_code == 400
+    assert blank.json()["error"]["details"]["fields"] == ["q"]
+
+    too_long = await client.get(
+        "/api/chats/image-search", params={"q": "а" * 4001}, headers=headers
+    )
+    assert too_long.status_code == 400
+    assert too_long.json()["error"]["details"]["fields"] == ["q"]
+
+    bad_page = await client.get(
+        "/api/chats/image-search",
+        params={"q": "кот", "limit": "51", "offset": "-1"},
+        headers=headers,
+    )
+    assert bad_page.status_code == 400
+    assert bad_page.json()["error"]["details"]["fields"] == ["limit", "offset"]
+    assert world.transport.embed_requests == []
+    assert world.vectors.calls == []
+
+
+async def test_images_mode_skips_llm_and_persists_images():
+    world = World(rag_min_score=0.5)
+    world.add_file(user_id=USER_A, file_id=LOW_IMAGE, file_name="low.jpg")
+    world.add_file(user_id=USER_A, file_id=HIGH_IMAGE, file_name="high.jpg")
+    world.add_file(user_id=USER_A, file_id=MID_IMAGE, file_name="below.jpg")
+    world.add_file(user_id=USER_A, file_id=FILE_A, file_name="Отчёт.pdf")
+    _add_image(world, LOW_IMAGE, "low.jpg", 0.5)
+    _add_image(world, HIGH_IMAGE, "high.jpg", 0.9)
+    _add_image(world, MID_IMAGE, "below.jpg", 0.49)
+    world.add_point(
+        user_id=USER_A,
+        document_id=FILE_A,
+        text=PHRASE,
+        page_number=5,
+        chunk_index=0,
+        score=0.8,
+    )
+    async with await open_client(world) as client:
+        created = await _create_chat(client)
+        response = await client.post(
+            f"/api/chats/{created['chat_id']}/messages",
+            headers=auth(USER_A),
+            json={"content": "  кот  ", "mode": "images"},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = parse_sse(response.content)
+        assert [name for name, _data in events] == ["meta", "delta", "done"]
+        meta = events[0][1]
+        assert meta["sources"] == []
+        assert [item["file_id"] for item in meta["images"]] == [HIGH_IMAGE, LOW_IMAGE]
+        assert meta["images"][0]["score"] == 0.9
+        assert meta["images"][1]["score"] == 0.5
+        assert all(item["file_id"] != MID_IMAGE for item in meta["images"])
+        assert set(meta["images"][0]) == {"file_id", "file_name", "score", "content_path"}
+        assert meta["images"][0]["content_path"] == f"/api/files/{HIGH_IMAGE}/content"
+        assert events[1][1] == {"content": "Найдено изображений: 2."}
+        assert events[2][1] == {"finish_reason": "stop"}
+        assert world.transport.llm_requests == []
+        assert [call["collection"] for call in world.vectors.calls] == ["images"]
+        assert world.vectors.calls[0]["limit"] == 5
+        assert world.vectors.calls[0]["offset"] == 0
+        assert world.transport.embed_body() == {"texts": ["кот"], "input_type": "query"}
+
+        detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
+        user_message, assistant = detail["messages"]
+        assert "images" not in user_message
+        assert "sources" not in user_message
+        assert assistant["images"] == meta["images"]
+        assert assistant["sources"] == []
+        assert assistant["content"] == "Найдено изображений: 2."
+        assert "finish_reason" not in assistant
+        assert detail["title"] == "кот"
+
+
+async def test_images_mode_without_matches_uses_the_image_phrase(api):
+    client, world = api
+    created = await _create_chat(client)
+    response = await client.post(
+        f"/api/chats/{created['chat_id']}/messages",
+        headers=auth(USER_A),
+        json={"content": "пусто", "mode": "images"},
+    )
+    assert response.status_code == 200
+    events = parse_sse(response.content)
+    assert [name for name, _data in events] == ["meta", "delta", "done"]
+    assert events[0][1]["sources"] == []
+    assert events[0][1]["images"] == []
+    assert events[1][1] == {"content": "Не найдено изображений."}
+    assert events[2][1] == {"finish_reason": "stop"}
+    assert world.transport.llm_requests == []
+    detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
+    assert "images" not in detail["messages"][0]
+    assert detail["messages"][1]["images"] == []
+    assert detail["messages"][1]["sources"] == []
+    assert detail["messages"][1]["content"] == "Не найдено изображений."
+
+
+async def test_documents_mode_does_not_query_the_images_collection(api):
+    client, world = api
+    _ready_pair(world)
+    world.add_file(user_id=USER_A, file_id=FILE_B, file_name="a.jpg")
+    _add_image(world, FILE_B, "a.jpg", 0.99)
+    created = await _create_chat(client)
+    payload = {"content": "Каков срок годности?", "mode": "documents"}
+    first = await client.post(
+        f"/api/chats/{created['chat_id']}/messages",
+        headers=auth(USER_A),
+        json=payload,
+    )
+    assert first.status_code == 200
+    events = parse_sse(first.content)
+    meta = events[0][1]
+    assert "images" not in meta
+    assert meta["sources"]
+    assert all(item["file_id"] == FILE_A for item in meta["sources"])
+    assert world.transport.llm_requests
+    second = await client.post(
+        f"/api/chats/{created['chat_id']}/messages",
+        headers=auth(USER_A),
+        json=payload,
+    )
+    assert parse_sse(second.content)[0][1]["sources"]
+    assert "images" not in parse_sse(second.content)[0][1]
+    assert len(world.transport.embed_requests) == 2
+    assert [call["collection"] for call in world.vectors.calls] == ["documents", "documents"]
+    detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
+    assert "images" not in detail["messages"][1]
+    assert detail["messages"][1]["sources"] == meta["sources"]
+
+
+async def test_message_mode_nope_is_validation_error(api):
+    client, world = api
+    created = await _create_chat(client)
+    response = await client.post(
+        f"/api/chats/{created['chat_id']}/messages",
+        headers=auth(USER_A),
+        json={"content": "вопрос", "mode": "nope"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["code"] == "validation_error"
+    assert body["error"]["message"] == "Invalid request"
+    assert body["error"]["details"]["fields"] == ["mode"]
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    assert world.transport.embed_requests == []
+    assert world.transport.llm_requests == []
+    assert world.vectors.calls == []
+    detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
+    assert detail["total_messages"] == 0

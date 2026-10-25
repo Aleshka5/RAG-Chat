@@ -9,7 +9,11 @@ dependencies = [
   "pika>=1.3.2",
   "pymongo>=4.10.0",
   "qdrant-client==1.13.3",
+  "rag-common",
 ]
+
+[tool.uv.sources]
+rag-common = { path = "../../packages/rag-common" }
 
 [dependency-groups]
 dev = [

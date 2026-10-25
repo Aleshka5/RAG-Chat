@@ -9,6 +9,16 @@ from typing import Any
 from processor.errors import InvalidMessage
 
 MESSAGE_TYPE_PROCESS = "doc.process"
+PDF_CONTENT_TYPE = "application/pdf"
+IMAGE_CONTENT_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    }
+)
+ACCEPTED_CONTENT_TYPES = frozenset({PDF_CONTENT_TYPE, *IMAGE_CONTENT_TYPES})
 
 
 @dataclass(frozen=True)
@@ -41,7 +51,8 @@ def parse_process_message(body: bytes) -> ProcessMessage:
     s3_key = data.get("s3_key")
     if not isinstance(s3_key, str) or s3_key == "":
         raise InvalidMessage("s3_key")
-    if data.get("content_type") != "application/pdf":
+    content_type = data.get("content_type")
+    if not isinstance(content_type, str) or content_type not in ACCEPTED_CONTENT_TYPES:
         raise InvalidMessage("content_type")
     return ProcessMessage(
         message_id=_uuid(data.get("message_id"), version=4),
@@ -49,7 +60,7 @@ def parse_process_message(body: bytes) -> ProcessMessage:
         user_id=_uuid(data.get("user_id"), version=None),
         s3_key=s3_key,
         file_name=file_name,
-        content_type="application/pdf",
+        content_type=content_type,
         created_at=_created_at(data.get("created_at")),
     )
 
