@@ -78,6 +78,11 @@ def file_document(**overrides: Any) -> dict[str, Any]:
     return document
 
 
+def raster_png() -> bytes:
+    pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 1, 1), 0)
+    return pixmap.tobytes("png")
+
+
 def pdf_bytes(pages: list[str]) -> bytes:
     document = pymupdf.open()
     try:

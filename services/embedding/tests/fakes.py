@@ -1,5 +1,7 @@
 from collections.abc import Callable
 
+from embedding.encoder import ImageInput
+
 
 class FakeEncoder:
     def __init__(
@@ -13,6 +15,7 @@ class FakeEncoder:
         self.error = error
         self._healthy = healthy
         self.seen: list[list[str]] = []
+        self.image_seen: list[list[ImageInput]] = []
         self.request_ids: list[str | None] = []
         self.closed = False
 
@@ -25,6 +28,25 @@ class FakeEncoder:
             return self.vectors
         vectors: list[list[float]] = []
         for index, _text in enumerate(texts):
+            vector = [0.0] * 768
+            vector[index % 768] = 1.0
+            vectors.append(vector)
+        return vectors
+
+    def embed_images(
+        self,
+        images: list[ImageInput],
+        *,
+        request_id: str | None = None,
+    ) -> list[list[float]]:
+        self.image_seen.append(list(images))
+        self.request_ids.append(request_id)
+        if self.error is not None:
+            raise self.error
+        if self.vectors is not None:
+            return self.vectors
+        vectors: list[list[float]] = []
+        for index, _image in enumerate(images):
             vector = [0.0] * 768
             vector[index % 768] = 1.0
             vectors.append(vector)

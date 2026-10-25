@@ -16,6 +16,7 @@
 | US-7 | `cursor/chat-cc69` | `services/chat/**` |
 | US-8 | `cursor/frontend-cc69` | `frontend/**` |
 | US-9 | `cursor/retrieval-only-2bef` | `services/chat/**`, `frontend/**`, нормативные абзацы этого сценария в `docs/` |
+| US-10 | `cursor/us10-image-search-ea6f` | `services/embedding/**`, `services/file-collector/**`, `services/processor/**`, `services/deletion-worker/**`, `services/chat/**`, `services/rag-edge/**`, `frontend/**`, `packages/rag-common/**`, нормативные абзацы этого сценария в `docs/` |
 
 Общий код — пакет `rag_common`. Сервисы не копируют конверт ошибки, проверку `X-Auth-User-Id`, топологию RabbitMQ, индексы MongoDB и формулу id точки.
 
@@ -152,3 +153,22 @@ Edge — единственный процесс в `rag_edge`. `GET /health` о
 > - [ ] Клиент показывает «Модель недоступна. Показаны найденные фрагменты.» и карточки источников, в том числе после перезагрузки.
 
 Ноль готовых файлов по-прежнему не вызывает LLM и возвращает «Не найдено в документах.» Это US-7.
+
+## US-10. Поиск изображений
+
+Ветка `cursor/us10-image-search-ea6f`. Каталоги `services/embedding/**`, `services/file-collector/**`, `services/processor/**`, `services/deletion-worker/**`, `services/chat/**`, `services/rag-edge/**`, `frontend/**`, `packages/rag-common/**`, плюс нормативные абзацы этого сценария в `docs/api.md`, `docs/openapi.yaml`, `docs/openapi-internal.yaml`, `docs/processing.md`, `docs/data-models.md`, `docs/messaging.md`, `docs/configuration.md`, `docs/internal-services.md`, `docs/architecture.md`, `docs/frontend.md`, `docs/gateway.md`, `docs/mvp.md`, `docs/deployment.md`, `docs/README.md` и в этом файле. Эти каталоги пересекаются с US-1…US-9: история меняет в них только регистрацию и поиск изображений.
+
+Два конвейера. PDF остаётся на OCR и коллекции `documents`. Изображение — один вектор в коллекции `images`, без OCR и без страниц. Word и обычный текст в эту историю не входят: `POST /api/files/documents` и multipart `POST /api/files` отвечают на них `415`.
+
+Приёмка:
+
+> - [ ] `POST /embed/image` принимает пачку base64 PNG, JPEG, WebP или GIF и возвращает L2-векторы 768 в том же пространстве, что `POST /embed`. Поля `texts`, `input_type` и `title`, пустая пачка, чужая модель, не-base64, чужой контейнер и размер больше `EMBEDDING_MAX_IMAGE_BYTES` дают `400` `validation_error`. `502` — если контейнер опознан, а llama-server его не разобрал. `504` — по `EMBEDDING_TIMEOUT`.
+> - [ ] llama-server загружает `EMBEDDING_MMPROJ` флагом `--mmproj`. Веса float16 и проектор звука не загружаются. Без проектора изображения `POST /embed/image` отвечает `502`. `POST /embed` и `GET /health` прежние, `EMBEDDING_DIM` остаётся 768.
+> - [ ] `POST /api/files/documents` с `content_type` `application/pdf` ставит `doc.process` и отвечает `202` карточкой файла с `content_type`. Word, `text/plain` и любой другой тип — `415`. Multipart `POST /api/files` по-прежнему принимает только PDF по сигнатуре `%PDF`.
+> - [ ] `POST /api/files/images` принимает `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Байты не копируются и хеш не пересчитывается. Нет объекта или ключ `files/{uuid}/...` чужого пользователя — `404` `object_not_found`. Активный дубликат по `content_sha256` или `s3_key` — `409` `duplicate_file` и второе сообщение не ставится. У изображения `page_count` равен `null`.
+> - [ ] Processor поднимает коллекцию `images` так же, как `documents`. Готовое изображение — одна точка `{file_id}:0` в `images`, без строк `file_pages` и без OCR. Постоянный отказ байтов, `400` эмбеддера или пустой вектор переводят файл в `error` и сообщение в DLQ. `502` и `504` идут по прежней политике повторов и затем в DLQ.
+> - [ ] Удаление файла снимает точки и в `documents`, и в `images`. Отсутствующая коллекция `images` удаление не останавливает.
+> - [ ] `GET /api/chats/image-search` ищет вектор вопроса из `POST /embed` (`input_type=query`) по коллекции `images` и отдаёт только `ready` файлы этого пользователя по убыванию `score`. Повтор страницы до истечения `IMAGE_SEARCH_CACHE_TTL_SECONDS` эмбеддер не вызывает.
+> - [ ] `POST /api/chats/{chat_id}/messages` с `mode=images` не вызывает LLM. В `meta` есть `images` и `sources: []`. При попаданиях одна дельта `Найдено изображений: N.` и `finish_reason` `stop`. При пустом поиске дельта `Не найдено изображений.` и пустой `images`. `GET` чата возвращает сохранённый массив. `mode=documents` и отсутствие `mode` не меняют прежний ход. Неизвестный `mode` — `400`.
+> - [ ] В чате есть переключатель режима, по умолчанию документы. Режим изображений рисует превью по `content_path` тем же запросом байтов, что и файл, через object URL, вместе с именем и `score`. Карточка и предпросмотр изображения не идут в PDF.js. PDF открывается как раньше.
+> - [ ] `GET /api/chats/image-search` остаётся на префиксе `/api/chats`, `POST /api/files/documents` и `POST /api/files/images` — на префиксе `/api/files`. Edge отдаёт эти пути в Chat и File Collector.

@@ -26,7 +26,7 @@ stateDiagram-v2
 | Из | В | Кто | Условие |
 |----|---|-----|---------|
 | `uploaded`, `error`, `processing` | `processing` | Processor | Документ ещё не `deleting`, `deleted` или `ready`. При входе `error` обнуляется. |
-| `processing` | `ready` | Processor | Запись всё ещё `processing`. Пишутся `page_count` и `updated_at`. |
+| `processing` | `ready` | Processor | Запись всё ещё `processing`. У PDF пишутся `page_count` и `updated_at`. У изображения `page_count` остаётся `null`, пишется `updated_at`. |
 | `processing` | `error` | Processor | Пишется код в `error`. |
 | `uploaded`, `ready`, `error` | `deleting` | File Collector | Условное обновление. Иначе `409` или `404`. |
 | `processing` | `deleting` | File Collector | Только если `updated_at` старше `STALE_PROCESSING_SECONDS`. |
@@ -43,11 +43,11 @@ stateDiagram-v2
 | `file_name` | string | Имя, как его показал пользователь, после отсечения пути. До 255 символов. |
 | `safe_name` | string | Имя внутри `s3_key`. |
 | `file_size` | int | Размер в байтах, больше 0. |
-| `content_type` | string | Всегда `application/pdf`. |
-| `content_sha256` | string | SHA-256 байтов файла, 64 hex-символа в нижнем регистре. |
-| `s3_key` | string | `files/{user_id}/{file_id}/{safe_name}`. |
+| `content_type` | string | `application/pdf` либо `image/jpeg`, `image/png`, `image/webp`, `image/gif`. |
+| `content_sha256` | string | SHA-256 байтов файла, 64 hex-символа в нижнем регистре. Для регистрации это строка манифеста: байты заново не хешируются. |
+| `s3_key` | string | У multipart-загрузки: `files/{user_id}/{file_id}/{safe_name}`. У регистрации: ключ из запроса, объект не переименовывается. |
 | `status` | string | Значение из закрытого набора. |
-| `page_count` | int или null | Число страниц после успешного открытия PDF. До этого `null`. |
+| `page_count` | int или null | Число страниц после успешного открытия PDF. До этого `null`. У изображения всегда `null`. |
 | `error` | string или null | Код ошибки либо `null`. |
 | `delete_claimed_at` | datetime или null | Внутреннее поле. `null`, пока Deletion Worker не начал обработку. В API не отдаётся. |
 | `created_at` | datetime | Момент вставки. |
@@ -63,10 +63,11 @@ stateDiagram-v2
 | `index_write_failed` | Qdrant не принял запись или предварительное удаление точек. |
 | `metadata_update_failed` | Финальное обновление MongoDB не выполнено. |
 | `no_extractable_text` | После извлечения и OCR не осталось ни одного чанка. |
+| `unsupported_image` | Байты изображения не опознаны, эмбеддер вернул `400` или вектор пуст. Сразу `error` и DLQ. |
 | `enqueue_failed` | Публикация `doc.process` не подтвердилась. Повторно публикует только sweeper Processor. |
 | `processing_attempts_exceeded` | Восемь доставок `doc.process` не довели файл до `ready`. |
 
-`safe_name`: взять базовое имя, оставить буквы Unicode, цифры и `._-`, остальные символы заменить на `_`, схлопнуть повторы `_`, обрезать до 200 символов, пустой результат заменить на `document.pdf`, расширение привести к `.pdf`.
+`safe_name` multipart-загрузки PDF: взять базовое имя, оставить буквы Unicode, цифры и `._-`, остальные символы заменить на `_`, схлопнуть повторы `_`, обрезать до 200 символов, пустой результат заменить на `document.pdf`, расширение привести к `.pdf`. Регистрация документа и изображения это правило к `s3_key` и к расширению `file_name` не применяет. `file_name` регистрации — базовое имя из манифеста, до 255 символов.
 
 Индексы, создаются идемпотентно при старте File Collector, Processor и Deletion Worker:
 
@@ -83,11 +84,20 @@ db.files.createIndex(
     }
   }
 )
+db.files.createIndex(
+  { user_id: 1, s3_key: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      status: { $in: ["uploaded", "processing", "ready", "error", "deleting"] }
+    }
+  }
+)
 ```
 
-Частичный индекс разрешает заново загрузить тот же файл после `deleted`. Гонка двух одинаковых загрузок заканчивается ошибкой дубликата ключа у второй вставки; API отвечает `409 duplicate_file`.
+Частичные индексы разрешают заново загрузить тот же файл после `deleted`. Гонка двух одинаковых загрузок или двух регистраций одного хеша либо одного `s3_key` заканчивается ошибкой дубликата ключа у второй вставки; API отвечает `409 duplicate_file`. Ключ multipart уникален сам по себе. Индекс по `s3_key` ловит повторную регистрацию того же ключа.
 
-В ответах API нет `s3_key`, `safe_name`, `content_sha256`, `user_id` и сырого `checkpoint`. Пока статус `processing`, в ответе есть `progress`, собранный из контрольной точки. В остальных статусах `progress` равен `null`.
+В карточке файла нет `s3_key`, `safe_name`, `content_sha256`, `user_id` и сырого `checkpoint`. `content_type` в карточке есть всегда. Поиск изображений отдаёт `s3_key` и `s3_url` отдельно, не в карточке файла. Пока статус `processing`, в ответе PDF есть `progress`, собранный из контрольной точки. В остальных статусах и у изображения `progress` равен `null`.
 
 ```json
 {
@@ -166,7 +176,8 @@ db.chats.createIndex({ user_id: 1, updated_at: -1 })
 | `user_id` | string | Тот же UUID владельца, чтобы выбирать сообщения без соединения с чатом. |
 | `role` | string | `user` или `assistant`. |
 | `content` | string | Текст сообщения. У ответа без LLM — пустая строка. |
-| `sources` | array | Только у `assistant`. У `user` поля нет. |
+| `sources` | array | Только у `assistant`. У `user` поля нет. У режима `images` массив пуст, как в `meta`. |
+| `images` | array | Только у `assistant` режима `images`, включая пустой массив. У `user` и у режима `documents` поля нет. |
 | `finish_reason` | string или поле отсутствует | Только у `assistant` и только со значением `retrieval_only`: ответ — найденные чанки, текста LLM нет. У обычного ответа и у `user` поля нет. |
 | `created_at` | datetime | У пары одного хода время ответа строго больше времени вопроса. |
 
@@ -180,6 +191,17 @@ db.chats.createIndex({ user_id: 1, updated_at: -1 })
 | `chunk_index` | int | С 0 внутри документа. |
 | `snippet` | string | Начало `text` чанка. Если текст длиннее 500 символов, в snippet попадают первые 497 символов и `...`. |
 | `score` | number | Оценка Qdrant, cosine similarity, больше — ближе. |
+
+Элемент `images`:
+
+| Поле | Тип | Правило |
+|------|-----|---------|
+| `file_id` | string | |
+| `file_name` | string | Имя на момент ответа. |
+| `score` | number | Cosine similarity. |
+| `content_path` | string | `/api/files/{file_id}/content`. |
+
+`s3_key` и `s3_url` в сообщении чата не хранятся. `content` ответа — фраза `Найдено изображений: N.` или `Не найдено изображений.`
 
 Индексы:
 
@@ -195,7 +217,7 @@ db.messages.createIndex({ user_id: 1, created_at: -1 })
 
 ## Qdrant
 
-Одна коллекция `documents` на всё приложение. Её создаёт Processor при старте, если коллекции ещё нет. Если коллекция есть, размерность вектора обязана совпасть с `EMBEDDING_DIM`. Иначе процесс не стартует.
+Две коллекции. `documents` хранит чанки PDF. `images` (`QDRANT_IMAGES_COLLECTION`, по умолчанию `images`) хранит по одной точке на файл изображения. Обе создаёт Processor при старте, если коллекции ещё нет. Если коллекция есть, размерность вектора обязана совпасть с `EMBEDDING_DIM`. Иначе процесс не стартует. PDF в `images` не пишется. Изображение в `documents` не пишется.
 
 Требуется Qdrant 1.11 или новее: флаг `is_tenant` появился в этой версии.
 
@@ -302,10 +324,30 @@ client.delete(
 )
 ```
 
-Успех операции при нуле удалённых точек — нормальный результат.
+Успех операции при нуле удалённых точек — нормальный результат. Удаление файла вызывает этот фильтр и в `documents`, и в `images`. Коллекции `images` нет — это не ошибка, коллекция при удалении не создаётся.
+
+### Коллекция `images`
+
+Параметры те же: `size=768`, `distance=COSINE`, `hnsw_config` с `payload_m=16` и `m=0`. Payload-индексы те же: `user_id` с `is_tenant=true`, `document_id` типа keyword. Имя коллекции — `QDRANT_IMAGES_COLLECTION`. Запрос без фильтра `user_id` не выполняется.
+
+Одна точка на файл. Id — та же формула `uuid5(namespace, "{file_id}:{chunk_index}")` с `chunk_index` 0, то есть имя `{file_id}:0`. Повтор обработки перезаписывает эту точку.
+
+| Поле | Тип | Правило |
+|------|-----|---------|
+| `file_id` | keyword | UUID файла. |
+| `document_id` | keyword | То же значение, что `file_id`. Удаление фильтрует по нему. |
+| `user_id` | keyword | Арендатор. |
+| `file_name` | keyword | Имя на момент индексации. |
+| `s3_key` | keyword | Ключ объекта. |
+| `s3_url` | keyword | `s3://{S3_BUCKET}/{s3_key}` без учётных данных. |
+| `created_at` | string | ISO-8601, время индексации. |
+
+Полей `text`, `page_number`, `page_end`, `chunk_index` и `source` нет.
+
+Поиск изображений передаёт вектор текстового запроса (`input_type=query` у `POST /embed`) в `query_points` этой коллекции с фильтром `user_id`. Оценка — cosine similarity. В выдачу попадают только точки, чей файл в MongoDB принадлежит этому `user_id` и имеет статус `ready`.
 
 ## Объект в MinIO
 
 Бакет — `S3_BUCKET` (по умолчанию `documents`). Один объект на файл, ключ `s3_key`. File Collector создаёт бакет при старте, если его нет.
 
-Содержимое — исходные байты PDF. Производные изображения страниц не сохраняются.
+Содержимое — исходные байты PDF или исходные байты изображения. Регистрация объект не копирует и не перекладывает. Производные изображения страниц PDF не сохраняются. У зарегистрированного файла ключ — тот, что передал вызывающий.

@@ -33,3 +33,23 @@ def point_payload(
         "chunk_index": chunk_index,
         "created_at": created_at,
     }
+
+
+def image_point_payload(
+    *,
+    file_id: str,
+    user_id: str,
+    file_name: str,
+    s3_key: str,
+    s3_url: str,
+    created_at: str,
+) -> dict[str, Any]:
+    return {
+        "file_id": file_id,
+        "document_id": file_id,
+        "user_id": user_id,
+        "file_name": file_name,
+        "s3_key": s3_key,
+        "s3_url": s3_url,
+        "created_at": created_at,
+    }

@@ -94,6 +94,119 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
+  /api/files/documents:
+    post:
+      tags: [Files]
+      summary: Зарегистрировать уже лежащий в бакете PDF
+      description: |
+        Манифест объекта в `S3_BUCKET`. Тело файла не передаётся, байты не копируются,
+        SHA-256 не пересчитывается. `content_type` обязан быть `application/pdf`.
+        Word, `text/plain` и любой другой тип — `415`, не `400`.
+        Успех публикует `doc.process` и возвращает карточку файла.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentRegistration"
+      responses:
+        "202":
+          description: Документ поставлен в прежний PDF-конвейер.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ObjectNotFound"
+        "409":
+          description: Активный файл пользователя с тем же хешем или тем же s3_key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: duplicate_file
+                  message: A file with the same content already exists
+                  details:
+                    file_id: 6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f
+        "415":
+          description: content_type не application/pdf. Word и text/plain входят в этот ответ.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: unsupported_media_type
+                  message: Only PDF is accepted
+        "500":
+          description: Метаданные записаны, публикация в очередь не удалась.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+  /api/files/images:
+    post:
+      tags: [Files]
+      summary: Зарегистрировать уже лежащее в бакете изображение
+      description: |
+        Тот же манифест, что у документа. `content_type` — один из
+        `image/jpeg`, `image/png`, `image/webp`, `image/gif`.
+        Иной тип — `415`. У карточки `page_count` равен null.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageRegistration"
+      responses:
+        "202":
+          description: Изображение поставлено в конвейер коллекции images.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ObjectNotFound"
+        "409":
+          description: Активный файл пользователя с тем же хешем или тем же s3_key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: content_type не из четырёх типов изображения.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: unsupported_media_type
+                  message: Only JPEG, PNG, WebP and GIF images are accepted
+        "500":
+          description: Метаданные записаны, публикация в очередь не удалась.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
   /api/files/{file_id}:
     parameters:
       - $ref: "#/components/parameters/FileId"
@@ -150,10 +263,12 @@ paths:
       - $ref: "#/components/parameters/FileId"
     get:
       tags: [Files]
-      summary: Байты PDF
+      summary: Байты файла
       responses:
         "200":
-          description: Содержимое файла. Страницу выбирает клиент.
+          description: |
+            Содержимое файла. Content-Type — сохранённый content_type.
+            Для PDF страницу выбирает клиент. Для изображения отдаются байты кадра.
           headers:
             Content-Disposition:
               schema:
@@ -161,6 +276,22 @@ paths:
               description: inline, с filename и filename*
           content:
             application/pdf:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/gif:
               schema:
                 type: string
                 format: binary
@@ -212,6 +343,45 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/chats/image-search:
+    get:
+      tags: [Chats]
+      summary: Найти изображения по текстовому запросу
+      description: |
+        Статический путь префикса `/api/chats`. `image-search` не является chat_id.
+        Вектор считается `POST /embed` с `input_type=query` и ищет коллекцию `images`.
+        В выдаче только файлы этого пользователя со статусом `ready`, по убыванию score.
+      parameters:
+        - $ref: "#/components/parameters/ImageQuery"
+        - $ref: "#/components/parameters/ImageSearchLimit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Страница попаданий. next_offset равен null, если страница короче limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageSearchPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: Embedding отверг запрос.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+        "504":
+          description: Таймаут Embedding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/chats/{chat_id}:
     parameters:
       - $ref: "#/components/parameters/ChatId"
@@ -287,6 +457,21 @@ paths:
 
             `sources` в `meta` совпадает с тем, что будет сохранено у ответа.
             Ошибка до начала потока возвращается JSON-телом и кодом 4xx/5xx, а не событием.
+
+            Режим `images` LLM не вызывает. В `meta` есть `images` и `sources: []`.
+            Одна `delta` содержит `Найдено изображений: N.` либо `Не найдено изображений.`
+            `done` несёт `finish_reason` `stop`.
+
+            ```
+            event: meta
+            data: {"chat_id":"...","user_message_id":"...","assistant_message_id":"...","sources":[],"images":[]}
+
+            event: delta
+            data: {"content":"Найдено изображений: 1."}
+
+            event: done
+            data: {"finish_reason":"stop"}
+            ```
           content:
             text/event-stream:
               schema:
@@ -360,6 +545,23 @@ components:
         type: integer
         minimum: 0
         default: 0
+    ImageQuery:
+      name: q
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 4000
+      description: После обрезки краёв от 1 до 4000 символов.
+    ImageSearchLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
   responses:
     Unauthorized:
       description: Нет X-Auth-User-Id или это не UUID.
@@ -393,6 +595,18 @@ components:
               message: Invalid request
               details:
                 fields: [content]
+    ObjectNotFound:
+      description: |
+        Объекта нет в бакете, либо ключ имеет вид files/{uuid}/... и этот UUID
+        не равен вызывающему.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: object_not_found
+              message: Object not found
     FileNotFound:
       description: Файл не найден, удалён или принадлежит другому пользователю.
       content:
@@ -424,7 +638,9 @@ components:
               code: file_too_large
               message: File exceeds the size limit
     UnsupportedMedia:
-      description: Содержимое не начинается с сигнатуры PDF.
+      description: |
+        Multipart принимает только сигнатуру PDF.
+        Word и обычный текст дают этот же код.
       content:
         application/json:
           schema:
@@ -474,6 +690,7 @@ components:
         - file_size
         - status
         - page_count
+        - content_type
         - error
         - progress
         - created_at
@@ -494,6 +711,16 @@ components:
           type: integer
           minimum: 0
           nullable: true
+          description: Число страниц PDF. У изображения и до открытия PDF равно null.
+        content_type:
+          type: string
+          enum:
+            - application/pdf
+            - image/jpeg
+            - image/png
+            - image/webp
+            - image/gif
+          description: Есть у каждого файла, включая PDF.
         error:
           type: string
           nullable: true
@@ -506,6 +733,7 @@ components:
             - no_extractable_text
             - enqueue_failed
             - processing_attempts_exceeded
+            - unsupported_image
         progress:
           nullable: true
           allOf:
@@ -632,6 +860,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Source"
+          description: У режима images массив пуст. У сообщения user поля нет.
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatImage"
+          description: Только у ответа режима images, включая пустой массив. У режима documents поля нет.
         finish_reason:
           type: string
           enum: [retrieval_only]
@@ -664,5 +898,85 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
+        mode:
+          type: string
+          enum: [documents, images]
+          description: Нет поля — режим documents. Иное значение — 400 validation_error, поле mode.
+    RegisteredObject:
+      type: object
+      required: [s3_key, file_name, content_sha256, file_size, content_type]
+      properties:
+        s3_key:
+          type: string
+          minLength: 1
+          description: Ключ в S3_BUCKET. Без ведущего слэша, без `..` и без обратной косой.
+        file_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        file_size:
+          type: integer
+          minimum: 1
+        content_type:
+          type: string
+    DocumentRegistration:
+      allOf:
+        - $ref: "#/components/schemas/RegisteredObject"
+      description: content_type равен application/pdf. Иной тип — ответ 415, не ошибка схемы.
+    ImageRegistration:
+      allOf:
+        - $ref: "#/components/schemas/RegisteredObject"
+      description: content_type — image/jpeg, image/png, image/webp или image/gif. Иной тип — 415.
+    ImageHit:
+      type: object
+      required: [file_id, file_name, s3_key, s3_url, score, content_path]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        s3_key:
+          type: string
+        s3_url:
+          type: string
+          description: s3://{bucket}/{s3_key} без учётных данных.
+        score:
+          type: number
+        content_path:
+          type: string
+          description: Путь /api/files/{file_id}/content.
+    ImageSearchPage:
+      type: object
+      required: [items, limit, offset, next_offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageHit"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        next_offset:
+          type: integer
+          minimum: 0
+          nullable: true
+    ChatImage:
+      type: object
+      required: [file_id, file_name, score, content_path]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        score:
+          type: number
+        content_path:
+          type: string
 security:
   - AuthUserId: []

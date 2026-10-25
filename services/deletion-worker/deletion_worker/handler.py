@@ -26,8 +26,10 @@ class DeletionHandler:
     """Apply one doc.delete delivery.
 
     Order is fixed: claim, MinIO object, Qdrant points for user_id and
-    document_id, file_pages, then status deleted. Each storage step is
-    idempotent so a crash before ack is finished by the next delivery.
+    document_id in the document collection and then the image collection,
+    file_pages, then status deleted. Each storage step is idempotent so a
+    crash before ack is finished by the next delivery. A missing image
+    collection deletes nothing and the delivery continues.
     """
 
     def __init__(

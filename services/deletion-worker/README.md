@@ -12,7 +12,7 @@ Consumer очереди `doc.delete`. Снимает объект PDF, точк�
 6. Если статус ещё не `deleting`, условно перевести его из `uploaded`, `ready`, `error` или устаревшего `processing`. Проигравшая гонка перечитывает документ и выбирает ветку заново.
 7. Записать `delete_claimed_at`, если поле пустое. Пока отметки нет, объект и точки не удаляются. Три неудачные записи сдвигают `updated_at` и уводят сообщение в DLQ.
 8. Удалить объект MinIO. Отсутствие ключа — успех.
-9. Удалить точки Qdrant с фильтром `user_id` и `document_id` (`file_id`). Ноль точек — успех.
+9. Удалить точки Qdrant с фильтром `user_id` и `document_id` (`file_id`) в `QDRANT_COLLECTION`, затем в `QDRANT_IMAGES_COLLECTION`. Ноль точек — успех. Нет коллекции изображений — успех.
 10. Удалить документы `file_pages` этого `file_id`. Ноль страниц — успех.
 11. Условно перевести `deleting` → `deleted` и только потом `ack`.
 
@@ -31,6 +31,7 @@ Consumer очереди `doc.delete`. Снимает объект PDF, точк�
 | `S3_BUCKET` | `documents` |
 | `S3_REGION` | `us-east-1` |
 | `QDRANT_COLLECTION` | `documents` |
+| `QDRANT_IMAGES_COLLECTION` | `images` |
 | `RABBITMQ_EXCHANGE` | `doc_events` |
 | `RABBITMQ_DLX` | `doc_events_dlq` |
 | `LOG_LEVEL` | `info` |

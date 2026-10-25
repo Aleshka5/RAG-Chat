@@ -11,6 +11,7 @@ from typing import Any
 from processor.chunking import PageText, TextTokenizer, build_chunks
 from processor.config import Settings, backoff_seconds
 from processor.errors import InvalidMessage, PermanentFailure, TransientFailure
+from processor.images import UndecodableImage, ensure_decodable_image, exceeds_image_limit
 from processor.logging import (
     file_id_var,
     get_logger,
@@ -18,10 +19,10 @@ from processor.logging import (
     request_id_var,
     user_id_var,
 )
-from processor.messages import ProcessMessage, parse_process_message
+from processor.messages import IMAGE_CONTENT_TYPES, ProcessMessage, parse_process_message
 from processor.mongo_store import CLAIM_STATUSES, SKIP_STATUSES
 from processor.pdfdoc import CorruptPdf, OpenedPdf
-from processor.points import point_id, point_payload
+from processor.points import image_point_payload, point_id, point_payload
 from processor.timeutil import format_z, utcnow
 
 
@@ -165,6 +166,12 @@ class Pipeline:
         return DeliveryResult.nack()
 
     def _process(self, message: ProcessMessage, request_id: str) -> None:
+        if message.content_type in IMAGE_CONTENT_TYPES:
+            self._process_image(message, request_id)
+            return
+        self._process_pdf(message, request_id)
+
+    def _process_pdf(self, message: ProcessMessage, request_id: str) -> None:
         data = self.blobs.get_bytes(message.s3_key)
         try:
             pdf = OpenedPdf(data)
@@ -185,6 +192,37 @@ class Pipeline:
             overlap=self.settings.chunk_overlap_tokens,
         )
         self._index(message, page_count, chunks, request_id)
+
+    def _process_image(self, message: ProcessMessage, request_id: str) -> None:
+        data = self.blobs.get_bytes(message.s3_key)
+        if exceeds_image_limit(data):
+            raise PermanentFailure("image_too_large")
+        try:
+            ensure_decodable_image(data, message.content_type)
+        except UndecodableImage as exc:
+            raise PermanentFailure("undecodable_image") from exc
+        self._require_processing(message.file_id)
+        vector = self.embedding.embed_image(data, request_id)
+        if len(vector) == 0:
+            raise PermanentFailure("embedding_failed")
+        file = self._require_processing(message.file_id)
+        s3_key = file["s3_key"]
+        point = {
+            "id": point_id(message.file_id, 0),
+            "vector": vector,
+            "payload": image_point_payload(
+                file_id=message.file_id,
+                user_id=file["user_id"],
+                file_name=file["file_name"],
+                s3_key=s3_key,
+                s3_url=f"s3://{self.settings.s3_bucket}/{s3_key}",
+                created_at=format_z(self._now()),
+            ),
+        }
+        self.qdrant.upsert_images([point])
+        if not self.store.mark_image_ready(message.file_id, self._now()):
+            raise _LeftProcessing()
+        get_logger().info("file ready", extra={"content_type": message.content_type})
 
     def _extract_pages(self, pdf: OpenedPdf, message: ProcessMessage, request_id: str) -> int:
         page_count = pdf.page_count
@@ -323,7 +361,10 @@ class Pipeline:
     def _lost(self, message: ProcessMessage, *, attempts: int) -> DeliveryResult:
         # processing.md: do not write further points; delete this file's points and ack.
         try:
-            self.qdrant.delete_file(message.user_id, message.file_id)
+            if message.content_type in IMAGE_CONTENT_TYPES:
+                self.qdrant.delete_image(message.user_id, message.file_id)
+            else:
+                self.qdrant.delete_file(message.user_id, message.file_id)
         except TransientFailure as exc:
             return self._transient(message.file_id, attempts, exc)
         get_logger().info("stopped because file left processing")

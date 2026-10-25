@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { fetchFileContent, getFile } from "../api/files";
+import { fetchContentBlob, fetchFileContent, getFile, isImageContentType } from "../api/files";
 import { AccessBlockedError, ApiError, AuthRedirectError, PreviewUnavailableError } from "../api/client";
+import { ObjectUrlImage } from "../components/ObjectUrlImage";
 import { ErrorBlock, LoadingBlock } from "../components/States";
 import { requestErrorLabel } from "../shared/labels";
-import { clampPage, parsePageParam } from "../shared/page";
+import { clampPage, fileContentPath, parsePageParam } from "../shared/page";
 import { openPdf, renderPdfPage } from "../pdf/document";
 import { useSessionStore } from "../stores/sessionStore";
 import { RenderingCancelledException, type PDFDocumentProxy, type RenderTask } from "pdfjs-dist";
 
 type Phase = "loading" | "ready" | "unavailable" | "error";
+type Viewer = "image" | "pdf" | null;
 
 export default function PreviewPage() {
   const { fileId = "" } = useParams();
@@ -17,9 +19,12 @@ export default function PreviewPage() {
   const requested = parsePageParam(searchParams.get("page"));
   const markPreviewUnavailable = useSessionStore((state) => state.markPreviewUnavailable);
   const [phase, setPhase] = useState<Phase>("loading");
+  const [loadingLabel, setLoadingLabel] = useState("Opening PDF…");
+  const [viewer, setViewer] = useState<Viewer>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [imageBlob, setImageBlob] = useState<Blob | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -32,26 +37,37 @@ export default function PreviewPage() {
   useEffect(() => {
     const controller = new AbortController();
     setPhase("loading");
+    setLoadingLabel("Opening PDF…");
+    setViewer(null);
     setErrorText(null);
     setNumPages(null);
     setFileName("");
+    setImageBlob(null);
     const previous = documentRef.current;
     documentRef.current = null;
     void previous?.destroy();
 
     void (async () => {
       try {
-        const [meta, bytes] = await Promise.all([
-          getFile(fileId, controller.signal).catch((error: unknown) => {
-            if (error instanceof PreviewUnavailableError || (error instanceof ApiError && error.status === 404)) {
-              return null;
-            }
-            throw error;
-          }),
-          fetchFileContent(fileId, controller.signal),
-        ]);
+        const meta = await getFile(fileId, controller.signal).catch((error: unknown) => {
+          if (error instanceof PreviewUnavailableError || (error instanceof ApiError && error.status === 404)) {
+            return null;
+          }
+          throw error;
+        });
         if (controller.signal.aborted) return;
         if (meta) setFileName(meta.file_name);
+        if (meta && isImageContentType(meta.content_type)) {
+          setLoadingLabel("Opening image…");
+          const blob = await fetchContentBlob(fileContentPath(fileId), controller.signal);
+          if (controller.signal.aborted) return;
+          setImageBlob(blob);
+          setViewer("image");
+          setPhase("ready");
+          return;
+        }
+        const bytes = await fetchFileContent(fileId, controller.signal);
+        if (controller.signal.aborted) return;
         const pdf = await openPdf(bytes);
         if (controller.signal.aborted) {
           await pdf.destroy();
@@ -59,6 +75,7 @@ export default function PreviewPage() {
         }
         documentRef.current = pdf;
         setNumPages(pdf.numPages);
+        setViewer("pdf");
         setPhase("ready");
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -93,17 +110,17 @@ export default function PreviewPage() {
   const page = clampPage(requested, numPages);
 
   useEffect(() => {
-    if (numPages == null) return;
+    if (viewer !== "pdf" || numPages == null) return;
     if (requested !== page) {
       setSearchParams({ page: String(page) }, { replace: true });
     }
-  }, [numPages, requested, page, setSearchParams]);
+  }, [viewer, numPages, requested, page, setSearchParams]);
 
   useEffect(() => {
     const pdf = documentRef.current;
     const canvas = canvasRef.current;
     const frame = frameRef.current;
-    if (phase !== "ready" || !pdf || !canvas || !frame || numPages == null) return;
+    if (viewer !== "pdf" || phase !== "ready" || !pdf || !canvas || !frame || numPages == null) return;
     let cancelled = false;
     let generation = 0;
     let task: RenderTask | null = null;
@@ -134,7 +151,7 @@ export default function PreviewPage() {
       task?.cancel();
       observer.disconnect();
     };
-  }, [phase, page, numPages, fileId]);
+  }, [viewer, phase, page, numPages, fileId]);
 
   function goTo(next: number) {
     const target = clampPage(next, numPages);
@@ -151,7 +168,7 @@ export default function PreviewPage() {
           <p className="kicker">Documents</p>
           <h1>{fileName || "Document"}</h1>
         </div>
-        {phase === "ready" && numPages != null ? (
+        {viewer === "pdf" && phase === "ready" && numPages != null ? (
           <div className="actions">
             <button type="button" className="btn btn-ghost" disabled={page <= 1} onClick={() => goTo(page - 1)}>
               Back
@@ -166,7 +183,7 @@ export default function PreviewPage() {
         ) : null}
       </div>
 
-      {phase === "loading" ? <LoadingBlock label="Opening PDF…" /> : null}
+      {phase === "loading" ? <LoadingBlock label={loadingLabel} /> : null}
       {phase === "unavailable" ? (
         <div className="surface stack" role="status">
           <h2>Preview unavailable</h2>
@@ -176,9 +193,16 @@ export default function PreviewPage() {
       {phase === "error" && errorText ? (
         <ErrorBlock text={errorText} onRetry={() => setReloadKey((value) => value + 1)} />
       ) : null}
-      <div ref={frameRef} className={phase === "ready" ? "sheet-frame" : "sheet-frame is-hidden"}>
-        <canvas ref={canvasRef} />
-      </div>
+      {viewer === "image" && imageBlob ? (
+        <div className="sheet-frame">
+          <ObjectUrlImage className="preview-image" blob={imageBlob} alt={fileName || "Image"} />
+        </div>
+      ) : null}
+      {viewer === "pdf" ? (
+        <div ref={frameRef} className={phase === "ready" ? "sheet-frame" : "sheet-frame is-hidden"}>
+          <canvas ref={canvasRef} />
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import math
 import time
 from collections.abc import Callable
@@ -7,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from processor.errors import TransientFailure
+from processor.errors import PermanentFailure, TransientFailure
 from processor.retry import retry_call
 
 
@@ -147,6 +148,43 @@ class EmbeddingClient:
         except _BadResponse as exc:
             raise TransientFailure(str(exc), permanent_code="embedding_failed") from exc
 
+    def embed_image(self, image: bytes, request_id: str) -> list[float]:
+        payload = {"images": [base64.standard_b64encode(image).decode("ascii")]}
+
+        def once() -> list[float]:
+            try:
+                response = self._client.post(
+                    f"{self._base}/embed/image",
+                    json=payload,
+                    headers={"X-Request-Id": request_id},
+                )
+            except httpx.TimeoutException as exc:
+                raise _RetryableHttp(504) from exc
+            except httpx.TransportError as exc:
+                raise _RetryableHttp(0) from exc
+            if response.status_code == 200:
+                return _image_embedding(response, dimension=self._dimension, model=self._model)
+            if response.status_code == 400:
+                raise PermanentFailure("embedding_failed")
+            if 500 <= response.status_code <= 599:
+                raise _RetryableHttp(response.status_code)
+            raise _BadResponse(f"embedding http {response.status_code}")
+
+        try:
+            return retry_call(
+                once,
+                attempts=self._attempts,
+                sleeper=self._sleep,
+                is_retryable=lambda exc: isinstance(exc, _RetryableHttp),
+            )
+        except _RetryableHttp as exc:
+            raise TransientFailure(
+                f"embedding http {exc.status_code}",
+                permanent_code="embedding_failed",
+            ) from exc
+        except _BadResponse as exc:
+            raise TransientFailure(str(exc), permanent_code="embedding_failed") from exc
+
 
 def _ocr_text(response: httpx.Response) -> str:
     try:
@@ -187,3 +225,20 @@ def _embeddings(
             numbers.append(float(item))
         parsed.append(numbers)
     return parsed
+
+
+def _image_embedding(response: httpx.Response, *, dimension: int, model: str) -> list[float]:
+    try:
+        body: Any = response.json()
+    except ValueError as exc:
+        raise _RetryableHttp(200) from exc
+    if isinstance(body, dict) and _embedding_is_empty(body.get("embeddings")):
+        raise PermanentFailure("embedding_failed")
+    return _embeddings(response, expected=1, dimension=dimension, model=model)[0]
+
+
+def _embedding_is_empty(vectors: Any) -> bool:
+    if not isinstance(vectors, list) or len(vectors) == 0:
+        return isinstance(vectors, list)
+    first = vectors[0]
+    return isinstance(first, list) and len(first) == 0

@@ -11,7 +11,10 @@ from embedding.constants import (
     DEFAULT_GGUF,
     DEFAULT_LLAMA_URL,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_MAX_IMAGE_BYTES,
+    DEFAULT_MAX_IMAGES,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_MMPROJ,
     DEFAULT_NGL,
     DEFAULT_PORT,
     DEFAULT_TIMEOUT_SECONDS,
@@ -30,6 +33,7 @@ class Settings:
     port: int
     model: str
     gguf: str
+    mmproj: str
     llama_url: str
     llama_host: str
     llama_port: int
@@ -38,6 +42,8 @@ class Settings:
     dimension: int
     max_tokens: int
     batch_size: int
+    max_images: int
+    max_image_bytes: int
     timeout_seconds: float
     log_level: str
 
@@ -47,6 +53,7 @@ class Settings:
         port = _positive_int(source, "EMBEDDING_PORT", DEFAULT_PORT, maximum=65535)
         model = _non_empty(source, "EMBEDDING_MODEL", MODEL_ID)
         gguf = _gguf_name(source, "EMBEDDING_GGUF", DEFAULT_GGUF)
+        mmproj = _mmproj_name(source, "EMBEDDING_MMPROJ", DEFAULT_MMPROJ)
         llama_url, llama_host, llama_port = _llama_url(
             source,
             "EMBEDDING_LLAMA_URL",
@@ -57,6 +64,12 @@ class Settings:
         dimension = _positive_int(source, "EMBEDDING_DIM", DEFAULT_DIMENSION)
         max_tokens = _positive_int(source, "EMBEDDING_MAX_TOKENS", DEFAULT_MAX_TOKENS)
         batch_size = _positive_int(source, "EMBEDDING_BATCH_SIZE", DEFAULT_BATCH_SIZE)
+        max_images = _positive_int(source, "EMBEDDING_MAX_IMAGES", DEFAULT_MAX_IMAGES)
+        max_image_bytes = _positive_int(
+            source,
+            "EMBEDDING_MAX_IMAGE_BYTES",
+            DEFAULT_MAX_IMAGE_BYTES,
+        )
         timeout_seconds = _positive_float(source, "EMBEDDING_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
         log_level = _log_level(source, "LOG_LEVEL", DEFAULT_LOG_LEVEL)
         if context < max_tokens:
@@ -65,6 +78,7 @@ class Settings:
             port=port,
             model=model,
             gguf=gguf,
+            mmproj=mmproj,
             llama_url=llama_url,
             llama_host=llama_host,
             llama_port=llama_port,
@@ -73,6 +87,8 @@ class Settings:
             dimension=dimension,
             max_tokens=max_tokens,
             batch_size=batch_size,
+            max_images=max_images,
+            max_image_bytes=max_image_bytes,
             timeout_seconds=timeout_seconds,
             log_level=log_level,
         )
@@ -167,6 +183,23 @@ def _log_level(env: Mapping[str, str], name: str, default: str) -> str:
 
 
 def _gguf_name(env: Mapping[str, str], name: str, default: str) -> str:
+    filename = _weights_filename(env, name, default)
+    parts = filename.lower().replace(".", "-").split("-")
+    if "mmproj" in parts or "f16" in parts:
+        raise ConfigError(name)
+    return filename
+
+
+def _mmproj_name(env: Mapping[str, str], name: str, default: str) -> str:
+    """Vision projector file. Float16 and a separate audio projector are rejected."""
+    filename = _weights_filename(env, name, default)
+    parts = filename.lower().replace(".", "-").split("-")
+    if "f16" in parts or "audio" in parts:
+        raise ConfigError(name)
+    return filename
+
+
+def _weights_filename(env: Mapping[str, str], name: str, default: str) -> str:
     raw = _raw(env, name)
     filename = default if raw is None else raw
     if filename.strip() == "" or filename != filename.strip():
@@ -174,9 +207,6 @@ def _gguf_name(env: Mapping[str, str], name: str, default: str) -> str:
     if "/" in filename or "\\" in filename or filename in {".", ".."}:
         raise ConfigError(name)
     if not filename.lower().endswith(".gguf"):
-        raise ConfigError(name)
-    parts = filename.lower().replace(".", "-").split("-")
-    if "mmproj" in parts or "f16" in parts:
         raise ConfigError(name)
     return filename
 

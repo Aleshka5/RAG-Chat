@@ -1262,6 +1262,12 @@ p.empty,
 
 .composer textarea { min-height: 6rem; }
 
+.mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
 .meta {
   color: var(--ink-muted);
   font-size: var(--step--1);
@@ -1421,6 +1427,53 @@ p.empty,
 .source-list > li {
   border-bottom: 1px solid var(--rule);
   padding: var(--s3) 0;
+}
+
+.image-list {
+  list-style: none;
+  margin: var(--s4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.image-hit {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: center;
+  min-width: 0;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  padding: var(--s3);
+}
+
+.image-hit-thumb {
+  width: 4.5rem;
+  height: 4.5rem;
+  overflow: hidden;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+}
+
+.image-hit-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.image-hit .meta,
+.image-hit .link,
+.image-hit .hint-danger { margin-top: var(--s2); }
+
+.preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 80vh;
+  margin-inline: auto;
+  object-fit: contain;
 }
 
 .table-dense td.cell-wrap {

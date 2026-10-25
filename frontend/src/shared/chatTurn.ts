@@ -1,4 +1,4 @@
-import type { Message, Source } from "../types";
+import type { ImageHit, Message, SearchMode, Source } from "../types";
 import { streamErrorLabel } from "./labels";
 import type { ChatStreamEvent } from "./sse";
 
@@ -8,12 +8,15 @@ export type TurnMessage = {
   content: string;
   created_at: string;
   sources?: Source[];
+  images?: ImageHit[];
+  searchMode?: SearchMode;
   pending: boolean;
   saved: boolean;
   failed: boolean;
   retrievalOnly: boolean;
   errorText?: string;
   retryContent?: string;
+  retryMode?: SearchMode;
 };
 
 export type LiveTurn = {
@@ -31,6 +34,7 @@ export function fromServerMessage(message: Message): TurnMessage {
     content: message.content,
     created_at: message.created_at,
     sources: message.role === "assistant" ? message.sources : undefined,
+    images: message.role === "assistant" ? (message.images ?? []) : undefined,
     pending: false,
     saved: true,
     failed: false,
@@ -38,7 +42,13 @@ export function fromServerMessage(message: Message): TurnMessage {
   };
 }
 
-export function startTurn(existing: TurnMessage[], content: string, now: string, tempUserId: string): LiveTurn {
+export function startTurn(
+  existing: TurnMessage[],
+  content: string,
+  now: string,
+  tempUserId: string,
+  mode?: SearchMode,
+): LiveTurn {
   return {
     messages: [
       ...existing,
@@ -47,6 +57,7 @@ export function startTurn(existing: TurnMessage[], content: string, now: string,
         role: "user",
         content,
         created_at: now,
+        searchMode: mode,
         pending: true,
         saved: false,
         failed: false,
@@ -83,6 +94,7 @@ export function applyStreamEvent(turn: LiveTurn, event: ChatStreamEvent, now: st
           content: "",
           created_at: now,
           sources: event.sources,
+          images: event.images ?? [],
           pending: false,
           saved: false,
           failed: false,
@@ -133,8 +145,11 @@ export function failTurn(turn: LiveTurn, errorText: string): LiveTurn {
   for (const message of turn.messages) {
     if (ids.has(message.message_id)) lastId = message.message_id;
   }
-  const question =
-    turn.messages.find((message) => message.message_id === (turn.userMessageId ?? turn.tempUserId))?.content ?? "";
+  const questionMessage = turn.messages.find(
+    (message) => message.message_id === (turn.userMessageId ?? turn.tempUserId),
+  );
+  const question = questionMessage?.content ?? "";
+  const retryMode = questionMessage?.searchMode;
   return {
     ...turn,
     outcome: "failed",
@@ -149,6 +164,7 @@ export function failTurn(turn: LiveTurn, errorText: string): LiveTurn {
         retrievalOnly: false,
         errorText: showsError ? errorText : undefined,
         retryContent: showsError ? question : undefined,
+        retryMode: showsError ? retryMode : undefined,
       };
     }),
   };

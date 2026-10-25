@@ -97,4 +97,76 @@ describe("PreviewPage", () => {
     expect(renderedPages.length).toBeGreaterThan(0);
     expect(renderedPages.every((page) => page === 4)).toBe(true);
   });
+
+  it("keeps the PDF viewer when content_type is application/pdf", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/content")) {
+          return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+            status: 200,
+            headers: { "Content-Type": "application/pdf" },
+          });
+        }
+        return Response.json({ ...file, content_type: "application/pdf" });
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={[`/files/${fileId}?page=1`]}>
+        <Routes>
+          <Route path="/files/:fileId" element={<PreviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Скан.pdf" })).toBeTruthy();
+    await waitFor(() => {
+      expect(openPdf).toHaveBeenCalled();
+    });
+    expect(document.querySelector("canvas")).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("shows an image and does not mount the PDF viewer when content_type is an image", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview-image");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/content")) {
+          return new Response(new Uint8Array([0xff, 0xd8, 0xff]), {
+            status: 200,
+            headers: { "Content-Type": "image/jpeg" },
+          });
+        }
+        return Response.json({
+          ...file,
+          file_name: "a.jpg",
+          content_type: "image/jpeg",
+          page_count: null,
+        });
+      }),
+    );
+
+    const view = render(
+      <MemoryRouter initialEntries={[`/files/${fileId}`]}>
+        <Routes>
+          <Route path="/files/:fileId" element={<PreviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const img = await screen.findByRole("img", { name: "a.jpg" });
+    expect(img.getAttribute("src")).toBe("blob:preview-image");
+    expect(img.getAttribute("src")).not.toContain("/api/");
+    expect(openPdf).not.toHaveBeenCalled();
+    expect(renderPdfPage).not.toHaveBeenCalled();
+    expect(document.querySelector("canvas")).toBeNull();
+    expect(screen.queryByText(/Page /)).toBeNull();
+    view.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:preview-image");
+  });
 });

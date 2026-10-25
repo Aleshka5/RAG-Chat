@@ -10,10 +10,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md ./
+# The lock pins rag-common at ../../packages/rag-common, which is /packages/rag-common
+# when this project is copied to /app. Build context is the repository root.
+COPY packages/rag-common/pyproject.toml /packages/rag-common/pyproject.toml
+COPY packages/rag-common/src /packages/rag-common/src
+COPY services/deletion-worker/pyproject.toml services/deletion-worker/uv.lock services/deletion-worker/README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY deletion_worker ./deletion_worker
+COPY services/deletion-worker/deletion_worker ./deletion_worker
 RUN uv sync --frozen --no-dev
 
 USER nobody

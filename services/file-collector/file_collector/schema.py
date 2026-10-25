@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta
 
+from rag_common.mongo import FILES_INDEXES
+
 from file_collector.clock import to_iso, utcnow
 
 ACTIVE_STATUSES = ("uploaded", "processing", "ready", "error", "deleting")
@@ -10,21 +12,20 @@ CONTENT_STATUSES = ("uploaded", "processing", "ready", "error")
 
 
 def file_indexes() -> list[dict]:
-    return [
-        {"keys": [("file_id", 1)], "unique": True, "name": "file_id_unique"},
-        {"keys": [("user_id", 1), ("status", 1)], "unique": False, "name": "user_id_status"},
-        {
-            "keys": [("user_id", 1), ("created_at", -1)],
-            "unique": False,
-            "name": "user_id_created_at",
-        },
-        {
-            "keys": [("user_id", 1), ("content_sha256", 1)],
-            "unique": True,
-            "name": "user_id_content_sha256_active",
-            "partialFilterExpression": {"status": {"$in": list(ACTIVE_STATUSES)}},
-        },
-    ]
+    """Startup indexes. Keys and options come from ``FILES_INDEXES``."""
+    specs: list[dict] = []
+    for spec in FILES_INDEXES:
+        if not spec.name:
+            raise RuntimeError("file index is missing a name")
+        item: dict = {
+            "keys": [(field, direction) for field, direction in spec.keys],
+            "unique": spec.unique,
+            "name": spec.name,
+        }
+        if spec.partial_filter_expression is not None:
+            item["partialFilterExpression"] = spec.partial_filter_expression
+        specs.append(item)
+    return specs
 
 
 def new_file_document(
@@ -36,6 +37,8 @@ def new_file_document(
     file_size: int,
     content_sha256: str,
     now: datetime | None = None,
+    content_type: str = "application/pdf",
+    s3_key: str | None = None,
 ) -> dict:
     moment = now or utcnow()
     return {
@@ -44,9 +47,9 @@ def new_file_document(
         "file_name": file_name,
         "safe_name": safe,
         "file_size": file_size,
-        "content_type": "application/pdf",
+        "content_type": content_type,
         "content_sha256": content_sha256,
-        "s3_key": f"files/{user_id}/{file_id}/{safe}",
+        "s3_key": s3_key if s3_key is not None else f"files/{user_id}/{file_id}/{safe}",
         "status": "uploaded",
         "page_count": None,
         "error": None,
@@ -93,6 +96,7 @@ def file_card(document: dict) -> dict:
         "file_id": document["file_id"],
         "file_name": document["file_name"],
         "file_size": document["file_size"],
+        "content_type": document.get("content_type") or "application/pdf",
         "status": status,
         "page_count": document.get("page_count"),
         "error": document.get("error"),

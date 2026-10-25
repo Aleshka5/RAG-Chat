@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -522,6 +522,7 @@ dependencies = [
     { name = "pymongo" },
     { name = "pymupdf" },
     { name = "qdrant-client" },
+    { name = "rag-common" },
     { name = "tokenizers" },
 ]
 
@@ -540,6 +541,7 @@ requires-dist = [
     { name = "pymongo", specifier = ">=4.10" },
     { name = "pymupdf", specifier = ">=1.24" },
     { name = "qdrant-client", specifier = "==1.13.3" },
+    { name = "rag-common", directory = "../../packages/rag-common" },
     { name = "tokenizers", specifier = ">=0.20" },
 ]
 
@@ -892,6 +894,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/eb/58/1e4acd7ff7637ed56a66e5044699e7af6067232703d0b34f05068fc6234b/qdrant_client-1.13.3.tar.gz", hash = "sha256:61ca09e07c6d7ac0dfbdeb13dca4fe5f3e08fa430cb0d74d66ef5d023a70adfc", size = 266278, upload-time = "2025-03-05T22:43:24.773Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/b4/bd676f91f5234ab59282e4a110f324029684482cbe08e7a1c77b6338013b/qdrant_client-1.13.3-py3-none-any.whl", hash = "sha256:f52cacbb936e547d3fceb1aaed3e3c56be0ebfd48e8ea495ea3dbc89c671d1d2", size = 306674, upload-time = "2025-03-05T22:43:23.382Z" },
+]
+
+[[package]]
+name = "rag-common"
+version = "0.1.0"
+source = { directory = "../../packages/rag-common" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.6" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]

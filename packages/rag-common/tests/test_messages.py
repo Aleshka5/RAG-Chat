@@ -62,6 +62,22 @@ def test_rejects_other_schema_string_version_and_x_death() -> None:
         DocProcess.model_validate({**PROCESS, "x-death": [{"count": 1}]})
     with pytest.raises(ValidationError):
         DocProcess.model_validate({**PROCESS, "content_type": "text/plain"})
+    word = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    with pytest.raises(ValidationError):
+        DocProcess.model_validate({**PROCESS, "content_type": word})
+    with pytest.raises(ValidationError):
+        DocProcess.model_validate({**PROCESS, "content_type": "application/msword"})
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"],
+)
+def test_process_accepts_pdf_and_image_types(content_type: str) -> None:
+    model = DocProcess.model_validate({**PROCESS, "content_type": content_type})
+    assert model.content_type == content_type
+    parsed = parse_message({**PROCESS, "content_type": content_type}).model_dump()
+    assert parsed["content_type"] == content_type
     with pytest.raises(ValidationError):
         DocProcess.model_validate({**PROCESS, "s3_key": ""})
     with pytest.raises(ValidationError):

@@ -25,3 +25,8 @@ export function formatPageCount(pageCount: number | null): string {
   if (pageCount == null) return "—";
   return String(pageCount);
 }
+
+export function formatScore(score: number): string {
+  if (!Number.isFinite(score)) return "0";
+  return new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(score);
+}

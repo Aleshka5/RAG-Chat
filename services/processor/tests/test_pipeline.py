@@ -5,16 +5,19 @@ from types import SimpleNamespace
 
 from tests.fakes import FakeEmbed, FakeOcr, FakeQdrant, MemoryBlobs, MemoryFiles
 from tests.support import (
+    FILE_ID,
     USER_ID,
     build_pipeline,
     file_document,
     make_settings,
     message_for,
     pdf_bytes,
+    raster_png,
 )
 
 from processor.consumer import make_consumer
 from processor.errors import TransientFailure
+from processor.images import MAX_IMAGE_BYTES
 from processor.points import point_id
 
 LONG = "Hello world " * 20
@@ -468,3 +471,277 @@ def test_model_change_drops_points_and_resets_chunks_done() -> None:
     assert saved["checkpoint"]["embedding_model"] == settings.embedding_model
     assert saved["checkpoint"]["chunks_done"] == saved["checkpoint"]["chunks_total"]
     assert "old" not in qdrant.points
+
+
+def _image_document(**overrides):
+    file_id = overrides.get("file_id", FILE_ID)
+    user_id = overrides.get("user_id", USER_ID)
+    return file_document(
+        file_name="Снимок.png",
+        content_type="image/png",
+        s3_key=f"files/{user_id}/{file_id}/Snimok.png",
+        **overrides,
+    )
+
+
+def test_image_message_embeds_once_into_the_images_collection() -> None:
+    settings = make_settings()
+    document = _image_document()
+    store = MemoryFiles()
+    store.add(document)
+    png = raster_png()
+    blobs = MemoryBlobs(png)
+    pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, blobs)
+    result = pipeline.handle(
+        message_for(document, content_type="image/png", file_name="from-message.png"),
+        redelivered=False,
+        headers={"x-request-id": "req-image"},
+    )
+    assert result.action == "ack"
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved is not None
+    assert saved["status"] == "ready"
+    assert saved["error"] is None
+    assert saved["page_count"] is None
+    assert saved["checkpoint"]["pages_done"] == 0
+    assert saved["checkpoint"]["pages_total"] is None
+    assert store.list_pages(document["file_id"]) == []
+    assert ocr.calls == []
+    assert embedding.calls == []
+    assert [call["path"] for call in embedding.image_calls] == ["/embed/image"]
+    assert embedding.image_calls[0]["image"] == png
+    assert embedding.image_calls[0]["request_id"] == "req-image"
+    assert qdrant.points == {}
+    assert list(qdrant.image_points) == [point_id(document["file_id"], 0)]
+    point = qdrant.image_points[point_id(document["file_id"], 0)]
+    assert point["vector"] == [1.0] * settings.embedding_dim
+    assert point["payload"] == {
+        "file_id": document["file_id"],
+        "document_id": document["file_id"],
+        "user_id": USER_ID,
+        "file_name": "Снимок.png",
+        "s3_key": document["s3_key"],
+        "s3_url": f"s3://documents/{document['s3_key']}",
+        "created_at": "2026-10-18T20:00:00Z",
+    }
+    assert ("upsert_images", 1) in qdrant.ops
+    assert not any(op[0] == "upsert" for op in qdrant.ops)
+    assert blobs.reads == [document["s3_key"]]
+
+
+def test_pdf_message_does_not_write_the_images_collection() -> None:
+    settings = make_settings()
+    document = file_document()
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(pdf_bytes([LONG]))
+    pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, blobs)
+    assert pipeline.handle(message_for(document), redelivered=False).action == "ack"
+    assert ocr.calls == []
+    assert embedding.image_calls == []
+    assert embedding.calls
+    assert {call["path"] for call in embedding.calls} == {"/embed"}
+    assert qdrant.points
+    assert qdrant.image_points == {}
+    assert not any(op[0] == "upsert_images" for op in qdrant.ops)
+    assert any(op[0] == "upsert" for op in qdrant.ops)
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "ready"
+    assert saved["page_count"] == 1
+
+
+def test_image_embedder_400_is_a_permanent_dead_letter() -> None:
+    settings = make_settings()
+    document = _image_document()
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(raster_png())
+    embedding = FakeEmbed(settings.embedding_dim, image_status=400)
+    pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, blobs, embedding=embedding)
+    body = message_for(document, content_type="image/png")
+    broker = Broker(body)
+    make_consumer(pipeline, sleeper=lambda _seconds: None)(
+        broker,
+        SimpleNamespace(delivery_tag=1, redelivered=False),
+        SimpleNamespace(headers={"x-request-id": "req-400"}),
+        body,
+    )
+    assert broker.main == []
+    assert broker.dead == [body]
+    assert broker.current is None
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "error"
+    assert saved["error"] == "embedding_failed"
+    assert saved["page_count"] is None
+    assert len(embedding.image_calls) == 1
+    assert embedding.calls == []
+    assert ocr.calls == []
+    assert qdrant.image_points == {}
+    assert qdrant.points == {}
+    assert not any(op[0] == "upsert_images" for op in qdrant.ops)
+
+
+def test_image_embedder_502_stays_processing_and_requeues() -> None:
+    settings = make_settings()
+    document = _image_document()
+    store = MemoryFiles()
+    store.add(document)
+    embedding = FakeEmbed(settings.embedding_dim, image_status=502)
+    pipeline, ocr, embedding, qdrant = build_pipeline(
+        settings,
+        store,
+        MemoryBlobs(raster_png()),
+        embedding=embedding,
+    )
+    result = pipeline.handle(message_for(document, content_type="image/png"), redelivered=False)
+    assert result.action == "nack"
+    assert result.requeue is True
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "processing"
+    assert saved["error"] is None
+    assert embedding.calls == []
+    assert ocr.calls == []
+    assert qdrant.ops == []
+
+
+def test_empty_image_embedding_is_permanent() -> None:
+    settings = make_settings()
+    document = _image_document()
+    store = MemoryFiles()
+    store.add(document)
+    embedding = FakeEmbed(settings.embedding_dim, image_vector=[])
+    pipeline, _ocr, embedding, qdrant = build_pipeline(
+        settings,
+        store,
+        MemoryBlobs(raster_png()),
+        embedding=embedding,
+    )
+    result = pipeline.handle(message_for(document, content_type="image/png"), redelivered=False)
+    assert result.action == "nack"
+    assert result.requeue is False
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "error"
+    assert saved["error"] == "embedding_failed"
+    assert len(embedding.image_calls) == 1
+    assert qdrant.image_points == {}
+
+
+def test_undecodable_and_oversized_images_skip_the_embedder() -> None:
+    settings = make_settings()
+    document = _image_document()
+    store = MemoryFiles()
+    store.add(document)
+    pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, MemoryBlobs(b"not-an-image"))
+    result = pipeline.handle(message_for(document, content_type="image/jpeg"), redelivered=False)
+    assert result.action == "nack" and result.requeue is False
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "error"
+    assert saved["error"] == "undecodable_image"
+    assert embedding.image_calls == []
+    assert embedding.calls == []
+    assert ocr.calls == []
+    assert qdrant.ops == []
+
+    huge = _image_document(file_id=str(uuid.uuid4()))
+    store.add(huge)
+    pipeline.blobs = MemoryBlobs(b"\x00" * (MAX_IMAGE_BYTES + 1))
+    result = pipeline.handle(message_for(huge, content_type="image/png"), redelivered=False)
+    assert result.action == "nack" and result.requeue is False
+    saved = store.get_by_file_id(huge["file_id"])
+    assert saved["status"] == "error"
+    assert saved["error"] == "image_too_large"
+    assert embedding.image_calls == []
+
+
+def test_ready_image_is_acked_without_a_second_point_write() -> None:
+    settings = make_settings()
+    document = _image_document(status="ready")
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(raster_png())
+    qdrant = FakeQdrant()
+    kept = point_id(document["file_id"], 0)
+    qdrant.image_points[kept] = {
+        "id": kept,
+        "vector": [0.5] * settings.embedding_dim,
+        "payload": {"user_id": document["user_id"], "document_id": document["file_id"], "file_id": document["file_id"]},
+    }
+    pipeline, _ocr, embedding, qdrant = build_pipeline(settings, store, blobs, qdrant=qdrant)
+    result = pipeline.handle(message_for(document, content_type="image/png"), redelivered=True)
+    assert result.action == "ack"
+    assert blobs.reads == []
+    assert embedding.image_calls == []
+    assert embedding.calls == []
+    assert qdrant.ops == []
+    assert kept in qdrant.image_points
+    assert store.get_by_file_id(document["file_id"])["status"] == "ready"
+
+
+def test_image_that_leaves_processing_drops_its_image_point() -> None:
+    settings = make_settings()
+    document = _image_document()
+    store = MemoryFiles()
+    store.add(document)
+    qdrant = FakeQdrant()
+    own = point_id(document["file_id"], 0)
+    other_user = str(uuid.uuid4())
+    qdrant.image_points[own] = {
+        "id": own,
+        "vector": [0.0] * settings.embedding_dim,
+        "payload": {"user_id": document["user_id"], "document_id": document["file_id"]},
+    }
+    qdrant.image_points["other"] = {
+        "id": "other",
+        "vector": [0.0],
+        "payload": {"user_id": other_user, "document_id": document["file_id"]},
+    }
+    qdrant.points["document-point"] = {
+        "id": "document-point",
+        "vector": [0.0] * settings.embedding_dim,
+        "payload": {
+            "user_id": document["user_id"],
+            "document_id": document["file_id"],
+            "chunk_index": 0,
+            "text": "keep",
+        },
+    }
+
+    def mark_left(file_id: str, now) -> bool:
+        store.files[file_id]["status"] = "deleting"
+        return False
+
+    pipeline, _ocr, embedding, qdrant = build_pipeline(
+        settings,
+        store,
+        MemoryBlobs(raster_png()),
+        qdrant=qdrant,
+    )
+    store.mark_image_ready = mark_left
+    result = pipeline.handle(message_for(document, content_type="image/png"), redelivered=False)
+    assert result.action == "ack"
+    assert store.get_by_file_id(document["file_id"])["status"] == "deleting"
+    assert own not in qdrant.image_points
+    assert "other" in qdrant.image_points
+    assert "document-point" in qdrant.points
+    assert ("delete_image", document["user_id"], document["file_id"]) in qdrant.ops
+    assert not any(op[0] == "delete_file" for op in qdrant.ops)
+    assert len(embedding.image_calls) == 1
+    assert embedding.calls == []
+
+
+def test_other_content_type_is_rejected_without_claiming_the_file() -> None:
+    settings = make_settings()
+    document = file_document()
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(b"hello")
+    pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, blobs)
+    result = pipeline.handle(message_for(document, content_type="text/plain"), redelivered=False)
+    assert result.action == "nack"
+    assert result.requeue is False
+    assert store.get_by_file_id(document["file_id"])["status"] == "uploaded"
+    assert blobs.reads == []
+    assert ocr.calls == []
+    assert embedding.calls == []
+    assert embedding.image_calls == []
+    assert qdrant.ops == []

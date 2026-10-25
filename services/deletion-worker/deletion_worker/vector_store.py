@@ -8,22 +8,19 @@ from deletion_worker.errors import TransientStorageError
 
 
 class QdrantVectorStore:
-    def __init__(self, client: Any, collection: str) -> None:
+    def __init__(self, client: Any, collection: str, images_collection: str) -> None:
         self._client = client
-        self._collection = collection
+        self._collections = (collection, images_collection)
 
     def delete_points(self, user_id: str, document_id: str) -> None:
-        selector = FilterSelector(
-            filter=Filter(
-                must=[
-                    FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-                    FieldCondition(key="document_id", match=MatchValue(value=document_id)),
-                ]
-            )
-        )
+        selector = _points_selector(user_id, document_id)
+        for collection in self._collections:
+            self._delete_collection(collection, selector)
+
+    def _delete_collection(self, collection: str, selector: FilterSelector) -> None:
         try:
             self._client.delete(
-                collection_name=self._collection,
+                collection_name=collection,
                 points_selector=selector,
                 wait=True,
             )
@@ -37,3 +34,14 @@ class QdrantVectorStore:
 
 def connect_qdrant(url: str) -> QdrantClient:
     return QdrantClient(url=url, timeout=30, prefer_grpc=False)
+
+
+def _points_selector(user_id: str, document_id: str) -> FilterSelector:
+    return FilterSelector(
+        filter=Filter(
+            must=[
+                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                FieldCondition(key="document_id", match=MatchValue(value=document_id)),
+            ]
+        )
+    )

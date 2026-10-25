@@ -1,7 +1,10 @@
 import pytest
+from qdrant_client.http.exceptions import UnexpectedResponse
 
+from deletion_worker.handler import DeletionHandler
 from deletion_worker.model import Outcome
-from tests.conftest import FILE_ID, S3_KEY, USER_ID, World, delete_body, snapshot
+from deletion_worker.vector_store import QdrantVectorStore
+from tests.conftest import FILE_ID, NOW, S3_KEY, USER_ID, World, delete_body, snapshot
 
 
 def test_full_delete_removes_object_points_pages_and_sets_deleted(world: World) -> None:
@@ -73,3 +76,47 @@ def test_crash_after_object_delete_is_repaired_by_redelivery(world: World) -> No
     assert FILE_ID not in world.files.pages
     assert world.files.docs[FILE_ID].status == "deleted"
     assert world.events.count(("delete_object", S3_KEY)) == 2
+
+
+def test_delete_clears_document_and_image_collections() -> None:
+    def run(*, missing_images: bool) -> None:
+        world = World()
+        world.add_file(status="deleting")
+
+        class Client:
+            def delete(self, collection_name: str, points_selector: object, wait: bool) -> None:
+                world.events.append(("qdrant_delete", collection_name))
+                must = points_selector.filter.must  # type: ignore[attr-defined]
+                assert [(item.key, item.match.value) for item in must] == [
+                    ("user_id", USER_ID),
+                    ("document_id", FILE_ID),
+                ]
+                assert wait is True
+                if missing_images and collection_name == "images":
+                    raise UnexpectedResponse(404, "not found", b"", {})
+
+        handler = DeletionHandler(
+            world.files,
+            world.objects,
+            QdrantVectorStore(Client(), "documents", "images"),
+            stale_processing_seconds=900,
+            clock=lambda: NOW,
+            sleep=world.sleeps.append,
+        )
+
+        assert handler.handle(delete_body()) is Outcome.ACK
+        assert world.files.docs[FILE_ID].status == "deleted"
+        assert S3_KEY not in world.objects.objects
+        assert FILE_ID not in world.files.pages
+        assert world.sleeps == []
+        assert world.events == [
+            ("claim", FILE_ID),
+            ("delete_object", S3_KEY),
+            ("qdrant_delete", "documents"),
+            ("qdrant_delete", "images"),
+            ("delete_pages", FILE_ID),
+            ("mark_deleted", FILE_ID),
+        ]
+
+    run(missing_images=False)
+    run(missing_images=True)

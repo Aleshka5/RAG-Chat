@@ -10,11 +10,12 @@ from minio import Minio
 from minio.error import S3Error
 
 from file_collector.config import Settings
-from file_collector.errors import StorageError
+from file_collector.errors import ObjectNotFound, StorageError
 
 logger = logging.getLogger("file_collector")
 
 _ALREADY_EXISTS = {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}
+_MISSING_OBJECT = {"NoSuchKey", "NoSuchObject", "NotFound"}
 
 
 class S3Objects:
@@ -49,6 +50,25 @@ class S3Objects:
                     raise
 
         await self._call(create)
+
+    async def head(self, key: str) -> int | None:
+        """Return the object size, or None when the store does not report one."""
+        client = self._client_or_raise()
+        bucket = self._settings.s3_bucket
+
+        def stat() -> int | None:
+            try:
+                info = client.stat_object(bucket, key)
+            except S3Error as exc:
+                if exc.code in _MISSING_OBJECT:
+                    raise ObjectNotFound(key) from exc
+                raise
+            size = getattr(info, "size", None)
+            if size is None:
+                return None
+            return int(size)
+
+        return await self._call(stat)
 
     async def put(self, key: str, data: BinaryIO, length: int) -> None:
         client = self._client_or_raise()

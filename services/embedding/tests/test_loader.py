@@ -15,7 +15,7 @@ from embedding.constants import (
     TOKENIZER_REPO,
     TOKENIZER_REVISION,
 )
-from embedding.encoder import LlamaEncoder
+from embedding.encoder import ImageInput, LlamaEncoder
 from embedding.errors import ModelLoadError, UpstreamFailed
 from embedding.loader import (
     LoadedModel,
@@ -27,18 +27,24 @@ from embedding.loader import (
 from tests.fakes import FakeCounter, FakeEncoder
 
 
-def test_llama_command_matches_the_text_only_contract() -> None:
+def test_llama_command_matches_the_embedding_contract() -> None:
     settings = Settings.from_env({})
+    mmproj = Path("/models") / settings.mmproj
     command = build_llama_server_command(
         settings,
         Path("/models/embeddinggemma-2-Q8_0.gguf"),
         "llama-server",
+        mmproj,
     )
     assert command[command.index("--host") + 1] == "127.0.0.1"
     assert command[command.index("--port") + 1] == "8092"
     assert command[command.index("-ngl") + 1] == "999"
     assert command.count("-ngl") == 1
     assert command[command.index("--model") + 1].endswith("embeddinggemma-2-Q8_0.gguf")
+    assert command[command.index("--mmproj") + 1] == str(mmproj)
+    assert command[command.index("--mmproj") + 1].endswith("mmproj-embeddinggemma-2-Q8_0.gguf")
+    assert command.count("--mmproj") == 1
+    assert "--no-mmproj" not in command
     assert "--embeddings" in command
     assert command[command.index("--pooling") + 1] == "mean"
     assert command[command.index("--ctx-size") + 1] == "2048"
@@ -46,20 +52,20 @@ def test_llama_command_matches_the_text_only_contract() -> None:
     assert command[command.index("--ubatch-size") + 1] == "2048"
     assert command[command.index("--parallel") + 1] == "1"
     assert command[command.index("--embd-normalize") + 1] == "2"
-    assert "--no-mmproj" in command
-    assert "--mmproj" not in command
     joined = " ".join(command)
     assert "F16" not in joined
     assert "safetensors" not in joined
-    assert "mmproj-" not in joined
+    assert "audio" not in joined
 
 
 def test_llama_command_passes_the_configured_gpu_layers() -> None:
     settings = Settings.from_env({"EMBEDDING_LLAMA_NGL": "0"})
+    mmproj = Path("/models/mmproj-embeddinggemma-2-Q8_0.gguf")
     command = build_llama_server_command(
         settings,
         Path("/models/embeddinggemma-2-Q8_0.gguf"),
         "llama-server",
+        mmproj,
     )
     assert command[command.index("-ngl") + 1] == "0"
 
@@ -68,8 +74,21 @@ def test_llama_command_passes_the_configured_gpu_layers() -> None:
         all_layers,
         Path("/models/embeddinggemma-2-Q8_0.gguf"),
         "llama-server",
+        mmproj,
     )
     assert command[command.index("-ngl") + 1] == "-1"
+
+
+def test_llama_command_uses_the_configured_mmproj_filename() -> None:
+    settings = Settings.from_env({"EMBEDDING_MMPROJ": "mmproj-custom-Q8_0.gguf"})
+    command = build_llama_server_command(
+        settings,
+        Path("/models/embeddinggemma-2-Q8_0.gguf"),
+        "llama-server",
+        Path("/models") / settings.mmproj,
+    )
+    assert command[command.index("--mmproj") + 1].endswith("mmproj-custom-Q8_0.gguf")
+    assert "--no-mmproj" not in command
 
 
 def test_weight_downloads_use_the_pinned_revisions(
@@ -101,9 +120,16 @@ def test_weight_downloads_use_the_pinned_revisions(
 def test_load_model_starts_llama_server_when_it_is_down(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    model_path = tmp_path / "embeddinggemma-2-Q8_0.gguf"
-    model_path.write_bytes(b"gguf")
-    monkeypatch.setattr("embedding.loader.download_gguf", lambda _filename: model_path)
+    settings = Settings.from_env({})
+    downloaded: list[str] = []
+
+    def fake_download(filename: str) -> Path:
+        downloaded.append(filename)
+        path = tmp_path / filename
+        path.write_bytes(b"gguf")
+        return path
+
+    monkeypatch.setattr("embedding.loader.download_gguf", fake_download)
     monkeypatch.setattr("embedding.loader.download_tokenizer", lambda: tmp_path / "tokenizer.json")
     monkeypatch.setattr(
         "embedding.loader.TokenizerJsonCounter.from_file", lambda _path: FakeCounter(1)
@@ -136,10 +162,13 @@ def test_load_model_starts_llama_server_when_it_is_down(
         return FakeProcess()
 
     monkeypatch.setattr("embedding.loader.subprocess.Popen", fake_popen)
-    loaded = load_model(Settings.from_env({}))
+    loaded = load_model(settings)
+    assert downloaded == [settings.gguf, settings.mmproj]
     assert len(commands) == 1
     assert "--embeddings" in commands[0]
     assert commands[0][commands[0].index("--pooling") + 1] == "mean"
+    assert commands[0][commands[0].index("--mmproj") + 1].endswith(settings.mmproj)
+    assert "--no-mmproj" not in commands[0]
     assert commands[0][0] == "/opt/llama/llama-server"
     assert isinstance(loaded.encoder, LlamaEncoder)
     loaded.close()
@@ -161,6 +190,86 @@ def test_load_model_does_not_spawn_a_second_server(
     loaded = load_model(Settings.from_env({}))
     assert isinstance(loaded.encoder, LlamaEncoder)
     loaded.close()
+
+
+def test_llama_command_omits_mmproj_when_the_projector_file_is_missing() -> None:
+    settings = Settings.from_env({})
+    command = build_llama_server_command(
+        settings,
+        Path("/models/embeddinggemma-2-Q8_0.gguf"),
+        "llama-server",
+        None,
+    )
+    assert "--mmproj" not in command
+    assert "--no-mmproj" not in command
+    assert "--embeddings" in command
+
+
+def test_missing_mmproj_keeps_text_startup_and_disables_images(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_download(filename: str) -> Path:
+        if "mmproj" in filename:
+            raise ModelLoadError("failed to download EMBEDDING_MMPROJ")
+        path = tmp_path / filename
+        path.write_bytes(b"gguf")
+        return path
+
+    monkeypatch.setattr("embedding.loader.download_gguf", fake_download)
+    monkeypatch.setattr("embedding.loader.download_tokenizer", lambda: tmp_path / "tokenizer.json")
+    monkeypatch.setattr(
+        "embedding.loader.TokenizerJsonCounter.from_file", lambda _path: FakeCounter(1)
+    )
+    monkeypatch.setattr("embedding.loader.shutil.which", lambda _name: "llama-server")
+    checks = {"n": 0}
+
+    def healthy(_url: str, timeout: float) -> bool:
+        checks["n"] += 1
+        return checks["n"] > 1
+
+    monkeypatch.setattr("embedding.loader._llama_is_healthy", healthy)
+    commands: list[list[str]] = []
+
+    class FakeProcess:
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "embedding.loader.subprocess.Popen",
+        lambda command: commands.append(command) or FakeProcess(),
+    )
+    loaded = load_model(Settings.from_env({}))
+    assert len(commands) == 1
+    assert "--embeddings" in commands[0]
+    assert "--mmproj" not in commands[0]
+    assert "--no-mmproj" not in commands[0]
+    assert loaded.encoder.images_ready is False
+    with pytest.raises(UpstreamFailed):
+        loaded.encoder.embed_images([ImageInput("image/png", "iVBORw0KGgo=")])
+    loaded.close()
+
+
+def test_download_gguf_fails_when_the_file_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    missing = tmp_path / "mmproj-embeddinggemma-2-Q8_0.gguf"
+
+    def fake_download(**kwargs: str) -> str:
+        assert kwargs["filename"] == missing.name
+        return str(missing)
+
+    monkeypatch.setattr("embedding.loader.hf_hub_download", fake_download)
+    with pytest.raises(ModelLoadError, match="EMBEDDING_MMPROJ"):
+        download_gguf(missing.name)
 
 
 def test_load_model_stops_the_container_when_llama_exits(

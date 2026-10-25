@@ -85,6 +85,65 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /embed/image:
+    post:
+      tags: [Embedding]
+      summary: Посчитать векторы пачки изображений
+      description: |
+        Тот же процесс, что `POST /embed`. Изображения без префикса task.
+        Ответ и размерность совпадают с `/embed`. Текстовые поля texts, input_type
+        и title дают 400 validation_error.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedImageRequest"
+      responses:
+        "200":
+          description: Векторы в том же порядке, что и images. L2-норма, 768 чисел.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedResult"
+        "400":
+          description: |
+            validation_error. details.fields называет поле: images, model, texts,
+            input_type, title или body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: validation_error
+                  message: Invalid request
+                  details:
+                    fields: [images]
+        "502":
+          description: |
+            upstream_failed. Контейнер опознан, но llama-server его не декодировал,
+            llama-server ответил ошибкой, либо проектор изображения не загружен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: upstream_failed
+                  message: Upstream failed
+        "504":
+          description: Бюджет EMBEDDING_TIMEOUT исчерпан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: upstream_timeout
+                  message: Embedding timed out
 components:
   parameters:
     RequestId:
@@ -157,6 +216,25 @@ components:
         title:
           type: string
           description: Имя файла. Обязательно для document и запрещено для query.
+        model:
+          type: string
+          description: Если передано, обязано совпасть с EMBEDDING_MODEL.
+    EmbedImageRequest:
+      type: object
+      additionalProperties: false
+      required: [images]
+      properties:
+        images:
+          type: array
+          minItems: 1
+          maxItems: 4
+          description: |
+            Base64. Верхняя длина — EMBEDDING_MAX_IMAGES, по умолчанию 4.
+            После декодирования каждый элемент не больше EMBEDDING_MAX_IMAGE_BYTES
+            (10485760). Контейнер — PNG, JPEG, WebP или GIF по сигнатуре байтов.
+          items:
+            type: string
+            minLength: 1
         model:
           type: string
           description: Если передано, обязано совпасть с EMBEDDING_MODEL.

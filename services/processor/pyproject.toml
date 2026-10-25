@@ -11,8 +11,12 @@ dependencies = [
     "pymongo>=4.10",
     "pymupdf>=1.24",
     "qdrant-client==1.13.3",
+    "rag-common",
     "tokenizers>=0.20",
 ]
+
+[tool.uv.sources]
+rag-common = { path = "../../packages/rag-common" }
 
 [dependency-groups]
 dev = [

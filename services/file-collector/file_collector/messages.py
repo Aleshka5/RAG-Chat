@@ -58,6 +58,7 @@ def process_publication(
     created_at: datetime,
     request_id: str | None,
     timestamp: int,
+    content_type: str = "application/pdf",
 ) -> tuple[str, dict, dict]:
     body = {
         "schema_version": 1,
@@ -67,7 +68,7 @@ def process_publication(
         "user_id": user_id,
         "s3_key": s3_key,
         "file_name": file_name,
-        "content_type": "application/pdf",
+        "content_type": content_type,
         "created_at": to_iso(created_at),
     }
     return PROCESS_ROUTING_KEY, body, _properties(message_id, request_id, timestamp)

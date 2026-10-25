@@ -6,7 +6,16 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
 from file_collector.errors import ApiError
-from file_collector.service import delete_pdf, get_pdf, list_pdfs, read_pdf, upload_pdf
+from file_collector.service import (
+    IMAGE_CONTENT_TYPES,
+    PDF_CONTENT_TYPE,
+    accept_manifest,
+    delete_pdf,
+    get_pdf,
+    list_pdfs,
+    read_pdf,
+    upload_pdf,
+)
 
 router = APIRouter()
 
@@ -121,6 +130,36 @@ async def create_file(request: Request, user_id: str = Depends(require_user)) ->
     return JSONResponse(status_code=202, content=card)
 
 
+@router.post("/api/files/documents")
+async def create_document(request: Request, user_id: str = Depends(require_user)) -> JSONResponse:
+    card = await accept_manifest(
+        request=request,
+        user_id=user_id,
+        request_id=request_id_of(request),
+        files=request.app.state.files,
+        objects=request.app.state.objects,
+        publisher=request.app.state.publisher,
+        allowed_types=frozenset({PDF_CONTENT_TYPE}),
+        pdf_extension=True,
+    )
+    return JSONResponse(status_code=202, content=card)
+
+
+@router.post("/api/files/images")
+async def create_image(request: Request, user_id: str = Depends(require_user)) -> JSONResponse:
+    card = await accept_manifest(
+        request=request,
+        user_id=user_id,
+        request_id=request_id_of(request),
+        files=request.app.state.files,
+        objects=request.app.state.objects,
+        publisher=request.app.state.publisher,
+        allowed_types=IMAGE_CONTENT_TYPES,
+        pdf_extension=False,
+    )
+    return JSONResponse(status_code=202, content=card)
+
+
 @router.get("/api/files/{file_id}")
 async def get_file(file_id: str, request: Request, user_id: str = Depends(require_user)) -> dict:
     return await get_pdf(
@@ -153,7 +192,7 @@ async def get_content(
     request: Request,
     user_id: str = Depends(require_user),
 ) -> Response:
-    payload, disposition, size = await read_pdf(
+    payload, disposition, size, media_type = await read_pdf(
         files=request.app.state.files,
         objects=request.app.state.objects,
         user_id=user_id,
@@ -161,7 +200,7 @@ async def get_content(
     )
     return Response(
         content=payload,
-        media_type="application/pdf",
+        media_type=media_type,
         headers={
             "Content-Disposition": disposition,
             "Content-Length": str(size),

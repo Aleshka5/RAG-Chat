@@ -13,7 +13,8 @@
 | `S3_BUCKET` | те же | `documents` | |
 | `S3_REGION` | те же | `us-east-1` | Для MinIO значение формальное, но клиент его требует. |
 | `QDRANT_URL` | processor, deletion, chat | нет | Например `http://qdrant:6333`. |
-| `QDRANT_COLLECTION` | те же | `documents` | |
+| `QDRANT_COLLECTION` | те же | `documents` | Коллекция чанков PDF. |
+| `QDRANT_IMAGES_COLLECTION` | те же | `images` | Коллекция изображений: одна точка на файл. |
 | `RABBITMQ_URL` | file-collector, processor, deletion | нет | AMQP URI. |
 | `RABBITMQ_EXCHANGE` | те же | `doc_events` | |
 | `RABBITMQ_DLX` | те же | `doc_events_dlq` | |
@@ -76,6 +77,8 @@
 | `EMBEDDING_TIMEOUT` | `10` | |
 | `EMBEDDING_DIM` | `768` | Длина вектора вопроса. Иная длина — ошибка запроса, не поиск. |
 | `EMBEDDING_MAX_TOKENS` | `1024` | Потолок вопроса вместе с префиксом. |
+| `IMAGE_SEARCH_CACHE_TTL_SECONDS` | `60` | Сколько секунд процесс Chat хранит вектор запроса изображений. Срок считается от записи и чтением не продлевается. |
+| `IMAGE_SEARCH_CACHE_SIZE` | `256` | Сколько таких векторов держит LRU одного процесса. |
 
 ## OCR
 
@@ -93,8 +96,11 @@
 | Переменная | По умолчанию | Смысл |
 |------------|--------------|--------|
 | `EMBEDDING_PORT` | `8091` | |
-| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Имя в ответе `/embed`. Энкодеры изображения и звука не загружаются. |
-| `EMBEDDING_GGUF` | `embeddinggemma-2-Q8_0.gguf` | Текстовый файл из `ggml-org/embeddinggemma-2-GGUF`. Не F16 и не `mmproj`. |
+| `EMBEDDING_MODEL` | `google/embeddinggemma-2` | Имя в ответе `/embed` и `/embed/image`. Проектор звука не загружается. |
+| `EMBEDDING_GGUF` | `embeddinggemma-2-Q8_0.gguf` | Текстовый файл из `ggml-org/embeddinggemma-2-GGUF`. Не F16 и не файл `mmproj`. |
+| `EMBEDDING_MMPROJ` | `mmproj-embeddinggemma-2-Q8_0.gguf` | Проектор изображения. llama-server получает его флагом `--mmproj`. Без файла `POST /embed/image` отвечает `502`. |
+| `EMBEDDING_MAX_IMAGES` | `4` | Длина массива `images` в `POST /embed/image`, от 1 до этого числа. |
+| `EMBEDDING_MAX_IMAGE_BYTES` | `10485760` | Верхняя граница одного изображения после base64-декодирования, 10 МиБ. |
 | `EMBEDDING_LLAMA_URL` | `http://127.0.0.1:8092` | llama-server внутри контейнера. В `rag_internal` этот порт не публикуется. |
 | `EMBEDDING_CONTEXT` | `2048` | Одинаковые `--ctx-size`, `--batch-size` и `--ubatch-size`. |
 | `EMBEDDING_DIM` | `768` | Полная размерность. Усечение Matryoshka в MVP не используется. |

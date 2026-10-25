@@ -24,6 +24,7 @@ def test_defaults(caplog: pytest.LogCaptureFixture) -> None:
     assert settings.s3_bucket == "documents"
     assert settings.s3_region == "us-east-1"
     assert settings.qdrant_collection == "documents"
+    assert settings.qdrant_images_collection == "images"
     assert settings.rabbitmq_exchange == "doc_events"
     assert settings.rabbitmq_dlx == "doc_events_dlq"
     assert settings.log_level == "info"
@@ -43,6 +44,15 @@ def test_missing_variable_logs_name_without_secret(caplog: pytest.LogCaptureFixt
     assert "MONGODB_URI" in caplog.text
     assert _SECRET not in caplog.text
     assert "amqp://rabbit" not in caplog.text
+
+
+def test_qdrant_collection_names_follow_env() -> None:
+    env = _env()
+    env["QDRANT_COLLECTION"] = "custom-docs"
+    env["QDRANT_IMAGES_COLLECTION"] = "custom-images"
+    settings = load_settings(env)
+    assert settings.qdrant_collection == "custom-docs"
+    assert settings.qdrant_images_collection == "custom-images"
 
 
 def test_invalid_concurrency_exits(caplog: pytest.LogCaptureFixture) -> None:

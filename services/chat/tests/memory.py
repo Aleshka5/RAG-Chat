@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 from chat.repository import ChatRecord, FileRecord, MessageRecord, Turn
 from chat.textutil import DEFAULT_TITLE
-from chat.vectors import Hit
+from chat.vectors import Hit, ImageHit, ImageScan
 
 
 @dataclass
@@ -13,6 +13,16 @@ class StoredPoint:
     text: str
     page_number: int
     chunk_index: int
+    score: float
+
+
+@dataclass
+class StoredImage:
+    user_id: str
+    file_id: str
+    file_name: str
+    s3_key: str
+    s3_url: str
     score: float
 
 
@@ -113,6 +123,7 @@ class MemoryRepository:
                 created_at=turn.assistant_created_at,
                 sources=list(turn.sources),
                 finish_reason=turn.finish_reason,
+                images=None if turn.images is None else list(turn.images),
             )
         )
         chat = self.chats[turn.chat_id]
@@ -127,10 +138,18 @@ class MemoryRepository:
 @dataclass
 class MemoryQdrant:
     points: list[StoredPoint] = field(default_factory=list)
+    images: list[StoredImage] = field(default_factory=list)
     calls: list[dict[str, object]] = field(default_factory=list)
 
     async def search(self, user_id: str, vector: list[float], limit: int) -> list[Hit]:
-        self.calls.append({"user_id": user_id, "limit": limit, "dim": len(vector)})
+        self.calls.append(
+            {
+                "collection": "documents",
+                "user_id": user_id,
+                "limit": limit,
+                "dim": len(vector),
+            }
+        )
         matched = [point for point in self.points if point.user_id == user_id]
         matched.sort(key=lambda point: point.score, reverse=True)
         return [
@@ -144,6 +163,34 @@ class MemoryQdrant:
             )
             for point in matched[:limit]
         ]
+
+    async def search_images(
+        self, user_id: str, vector: list[float], limit: int, offset: int
+    ) -> ImageScan:
+        self.calls.append(
+            {
+                "collection": "images",
+                "user_id": user_id,
+                "limit": limit,
+                "offset": offset,
+                "dim": len(vector),
+            }
+        )
+        matched = [point for point in self.images if point.user_id == user_id]
+        matched.sort(key=lambda point: point.score, reverse=True)
+        window = matched[offset : offset + limit]
+        hits = [
+            ImageHit(
+                file_id=point.file_id,
+                file_name=point.file_name,
+                s3_key=point.s3_key,
+                s3_url=point.s3_url,
+                score=point.score,
+                user_id=point.user_id,
+            )
+            for point in window
+        ]
+        return ImageScan(hits=hits, scanned=len(window))
 
     async def close(self) -> None:
         return None

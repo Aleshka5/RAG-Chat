@@ -29,6 +29,8 @@ GPU контейнеру отдаёт Switch-Service, тем же способо
 |------------|--------------|--------|
 | `OCR_LLAMA_NGL` | по профилю каталога (`0` в `cpu`, `999` в `gpu`) | Сколько слоёв llama.cpp выносит на GPU. Задаётся в каталоге Switch-Service, не в этом репозитории. |
 | `EMBEDDING_LLAMA_NGL` | по профилю каталога (`0` в `cpu`, `999` в `gpu`) | То же для embedder. |
+| Память embedder, профиль `gpu` | 2304 МиБ VRAM и 1024 МиБ RAM | Заявка каталога Switch-Service. В compose этого репозитория контейнер embedding не описан. |
+| Память embedder, профиль `cpu` | 1792 МиБ RAM | Заявка того же каталога. |
 | `HF_TOKEN` | нет | Необязательный токен Hugging Face. Пусто — анонимное скачивание. |
 
 Инфраструктура локального стенда: MinIO и RabbitMQ 3 (с management-плагином) общие, живут в `common_network` (см. `Common/docker-compose-common.yml`), куда RAG-сервисы подключаются как к external-сети. В составе RAG-стека остаются MongoDB 7 и Qdrant ≥ 1.13. Сеть `models_network` вместе с `ocr`, `embedding`, LLM и генерацией изображений для этого стека тоже external: и сеть, и контейнеры создаёт Switch-Service.
@@ -41,7 +43,7 @@ GPU контейнеру отдаёт Switch-Service, тем же способо
 | Индексы `files` | File Collector, Processor, Deletion Worker |
 | Индекс `file_pages` | Processor, Deletion Worker |
 | Индексы `chats` и `messages` | Chat |
-| Коллекция Qdrant и payload-индексы | Processor |
+| Коллекции Qdrant `documents` и `images` и их payload-индексы | Processor |
 | Топология RabbitMQ | File Collector, Processor, Deletion Worker |
 | Веса OCR и Embedding | Switch-Service: процессы `ocr` и `embedding` до готовности |
 
@@ -85,7 +87,9 @@ services:
       FRONTEND_URL: http://frontend:3000
 
   file-collector:
-    build: ./services/file-collector
+    build:
+      context: .
+      dockerfile: services/file-collector/Dockerfile
     networks: [rag_internal, common_network]
     restart: unless-stopped
     depends_on: [mongo]
@@ -100,7 +104,9 @@ services:
       RABBITMQ_URL: amqp://rabbit:5672/
 
   processor:
-    build: ./services/processor
+    build:
+      context: .
+      dockerfile: services/processor/Dockerfile
     networks: [rag_internal, common_network, models_network]
     restart: unless-stopped
     depends_on: [mongo, qdrant]
@@ -117,7 +123,9 @@ services:
       PROCESSOR_CONCURRENCY: "1"
 
   deletion-worker:
-    build: ./services/deletion-worker
+    build:
+      context: .
+      dockerfile: services/deletion-worker/Dockerfile
     networks: [rag_internal, common_network]
     restart: unless-stopped
     depends_on: [mongo, qdrant]
@@ -178,7 +186,7 @@ volumes:
 4. Опубликовать тело в `doc_events` с routing key `doc.process` или `doc.delete`, `delivery_mode=2`, новый `message_id` можно оставить прежним.
 5. Подтвердить копию в dead-очереди только после confirm рабочей публикации.
 
-Битый PDF после replay снова уйдёт в DLQ со статусом `error`. Его путь — удаление через API, а не бесконечный replay.
+Битый PDF после replay снова уйдёт в DLQ со статусом `error`. Его путь — удаление через API, а не бесконечный replay. Постоянно отвергнутое изображение (`unsupported_image`) ведёт себя так же.
 
 ## Проверка стенда
 

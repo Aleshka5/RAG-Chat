@@ -73,9 +73,9 @@
 | `message_type` | Строго `doc.process`. |
 | `message_id` | UUID, для логов. На идемпотентность не влияет. |
 | `file_id`, `user_id` | Обязательные UUID. |
-| `s3_key` | Непустая строка. Processor читает объект только по этому ключу и только если документ MongoDB с тем же `file_id` содержит тот же `s3_key` и тот же `user_id`. Иначе сообщение отклоняется в DLQ. |
+| `s3_key` | Непустая строка. У multipart это `files/{user_id}/{file_id}/{safe_name}`. У регистрации это ключ из запроса. Processor читает объект только по этому ключу и только если документ MongoDB с тем же `file_id` содержит тот же `s3_key` и тот же `user_id`. Иначе сообщение отклоняется в DLQ. |
 | `file_name` | Отображаемое имя для payload Qdrant, если оно совпадает с документом. При расхождении побеждает `file_name` из MongoDB. |
-| `content_type` | `application/pdf`. |
+| `content_type` | `application/pdf` либо `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Другое значение — битое тело: `nack` без requeue, статус файла не менять. Word и `text/plain` сюда не публикуются. |
 | `created_at` | Время постановки сообщения. |
 
 `ack` — после согласованного завершения: либо файл `ready` и точки записаны, либо обработка сознательно пропущена (`ready`, `deleting`, `deleted`), либо статус уже записан как `error` и сообщение уходит в DLQ отдельным `nack`. Нельзя подтверждать сообщение, если статус остался `processing` из-за сбоя.
@@ -110,7 +110,7 @@
 
 ## Sweeper
 
-Processor не реже чем раз в `SWEEP_INTERVAL_SECONDS` и один раз при старте ищет документы `status=error` и `error=enqueue_failed`, у которых `updated_at` старше `UPLOAD_REQUEUE_AFTER_SECONDS`. Для каждого публикует новый `doc.process`. Другие коды `error` sweeper не трогает: битый PDF не должен возвращаться в очередь сам.
+Processor не реже чем раз в `SWEEP_INTERVAL_SECONDS` и один раз при старте ищет документы `status=error` и `error=enqueue_failed`, у которых `updated_at` старше `UPLOAD_REQUEUE_AFTER_SECONDS`. Для каждого публикует новый `doc.process` с `content_type` из документа файла, в том числе для изображения. Другие коды `error` sweeper не трогает: битый PDF и `unsupported_image` не возвращаются в очередь сами.
 
 Deletion Worker так же ищет `status=deleting`, где `delete_claimed_at` равно `null` и `updated_at` старше `DELETE_REQUEUE_AFTER_SECONDS`, и публикует `doc.delete`. Уже захваченное удаление в рабочую очередь повторно не ставится: незакрытое сообщение вернёт брокер, а окончательно отклонённое лежит в DLQ.
 

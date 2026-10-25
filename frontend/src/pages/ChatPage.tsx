@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
+import { ImageHitList } from "../components/ImageHit";
 import { Markdown } from "../components/Markdown";
 import { SourceCard } from "../components/SourceCard";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/States";
 import { RETRIEVAL_ONLY_NOTICE, requestErrorLabel } from "../shared/labels";
 import type { TurnMessage } from "../shared/chatTurn";
 import { useChatStore } from "../stores/chatStore";
+import type { SearchMode } from "../types";
 
 function mediaMatches(query: string): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
@@ -52,6 +54,7 @@ export function ChatPage() {
   const send = useChatStore((state) => state.send);
   const retry = useChatStore((state) => state.retry);
   const [draft, setDraft] = useState("");
+  const [mode, setMode] = useState<SearchMode>("documents");
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -72,6 +75,7 @@ export function ChatPage() {
 
   useEffect(() => {
     setDraft("");
+    setMode("documents");
   }, [chatId]);
 
   useEffect(() => {
@@ -166,7 +170,7 @@ export function ChatPage() {
     if (!chatId || sending || trimmed.length < 1 || tooLong) return;
     const text = trimmed;
     setDraft("");
-    void send(text);
+    void send(text, mode);
   }
 
   const historyHidden = compact && !historyOpen;
@@ -295,7 +299,7 @@ export function ChatPage() {
                     <MessageView
                       key={message.message_id}
                       message={message}
-                      onRetry={(content) => void retry(content)}
+                      onRetry={(content, retryMode) => void retry(content, retryMode)}
                       retryDisabled={sending}
                     />
                   ))}
@@ -310,11 +314,31 @@ export function ChatPage() {
               }}
             >
               <div className="composer-measure stack">
+                <div className="mode-switch" role="group" aria-label="Search mode">
+                  <button
+                    type="button"
+                    className={mode === "documents" ? "btn btn-small" : "btn btn-small btn-ghost"}
+                    aria-pressed={mode === "documents"}
+                    disabled={sending || activeId !== chatId}
+                    onClick={() => setMode("documents")}
+                  >
+                    Documents
+                  </button>
+                  <button
+                    type="button"
+                    className={mode === "images" ? "btn btn-small" : "btn btn-small btn-ghost"}
+                    aria-pressed={mode === "images"}
+                    disabled={sending || activeId !== chatId}
+                    onClick={() => setMode("images")}
+                  >
+                    Images
+                  </button>
+                </div>
                 <div className="field">
                   <label htmlFor="question">Question</label>
                   <textarea
                     id="question"
-                    placeholder="Ask about the documents"
+                    placeholder={mode === "images" ? "Search images" : "Ask about the documents"}
                     value={draft}
                     maxLength={8000}
                     disabled={sending || activeId !== chatId}
@@ -405,11 +429,12 @@ function MessageView({
   retryDisabled,
 }: {
   message: TurnMessage;
-  onRetry: (content: string) => void;
+  onRetry: (content: string, mode?: SearchMode) => void;
   retryDisabled: boolean;
 }) {
   const mine = message.role === "user";
   const sources = message.role === "assistant" ? (message.sources ?? []) : [];
+  const images = message.role === "assistant" && Array.isArray(message.images) ? message.images : [];
   return (
     <article>
       <div className={mine ? "a-callout" : undefined}>
@@ -431,6 +456,7 @@ function MessageView({
             ))}
           </ul>
         ) : null}
+        {images.length > 0 ? <ImageHitList images={images} /> : null}
       </div>
       {message.errorText ? (
         <div role="alert">
@@ -439,7 +465,7 @@ function MessageView({
             type="button"
             className="btn"
             disabled={retryDisabled}
-            onClick={() => onRetry(message.retryContent ?? message.content)}
+            onClick={() => onRetry(message.retryContent ?? message.content, message.retryMode)}
           >
             Retry
           </button>

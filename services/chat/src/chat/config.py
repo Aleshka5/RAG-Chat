@@ -90,6 +90,7 @@ class Settings:
     mongodb_uri: str
     qdrant_url: str
     qdrant_collection: str
+    qdrant_images_collection: str
     embedding_url: str
     llm_base_url: str
     llm_api_key: str
@@ -97,6 +98,8 @@ class Settings:
     llm_temperature: float
     llm_timeout_seconds: float
     rag_top_k: int
+    image_search_cache_ttl_seconds: int
+    image_search_cache_size: int
     rag_min_score: float
     rag_context_messages: int
     embedding_timeout: float
@@ -125,6 +128,7 @@ def load_settings() -> Settings:
         mongodb_uri=_required_str("MONGODB_URI"),
         qdrant_url=_required_str("QDRANT_URL").rstrip("/"),
         qdrant_collection=_optional_str("QDRANT_COLLECTION", "documents"),
+        qdrant_images_collection=_optional_str("QDRANT_IMAGES_COLLECTION", "images"),
         embedding_url=_required_str("EMBEDDING_URL").rstrip("/"),
         llm_base_url=_required_str("LLM_BASE_URL").rstrip("/"),
         llm_api_key=_required_str("LLM_API_KEY"),
@@ -132,6 +136,10 @@ def load_settings() -> Settings:
         llm_temperature=_float_value("LLM_TEMPERATURE", 0.2, minimum=None, maximum=None),
         llm_timeout_seconds=_float_value("LLM_TIMEOUT_SECONDS", 60, minimum=0.001, maximum=None),
         rag_top_k=_int_value("RAG_TOP_K", 5, minimum=1, maximum=50),
+        image_search_cache_ttl_seconds=_int_value(
+            "IMAGE_SEARCH_CACHE_TTL_SECONDS", 60, minimum=0, maximum=None
+        ),
+        image_search_cache_size=_int_value("IMAGE_SEARCH_CACHE_SIZE", 256, minimum=1, maximum=None),
         rag_min_score=_float_value("RAG_MIN_SCORE", 0, minimum=0, maximum=None),
         rag_context_messages=_int_value("RAG_CONTEXT_MESSAGES", 10, minimum=0, maximum=None),
         embedding_timeout=_float_value("EMBEDDING_TIMEOUT", 10, minimum=0.001, maximum=None),

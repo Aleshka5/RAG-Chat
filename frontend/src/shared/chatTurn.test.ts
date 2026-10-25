@@ -23,6 +23,7 @@ describe("chat turn", () => {
       user_message_id: "user-1",
       assistant_message_id: "assistant-1",
       sources: [source],
+      images: [],
     };
     turn = applyStreamEvent(turn, meta, "2026-10-18T20:00:01Z");
     expect(turn.messages[0]).toMatchObject({ message_id: "user-1", pending: false, saved: false });
@@ -53,6 +54,7 @@ describe("chat turn", () => {
         user_message_id: "user-1",
         assistant_message_id: "assistant-1",
         sources: [source],
+        images: [],
       },
       "2026-10-18T20:00:01Z",
     );
@@ -102,6 +104,7 @@ describe("chat turn", () => {
         user_message_id: "user-1",
         assistant_message_id: "assistant-1",
         sources: [],
+        images: [],
       },
       "2026-10-18T20:00:01Z",
     );
@@ -111,5 +114,56 @@ describe("chat turn", () => {
     expect(turn.messages[1].errorText).toBe("The answer did not arrive in time");
     expect(turn.messages[1].retryContent).toBe("Повтори");
     expect(turn.messages[1].sources).toEqual([]);
+  });
+
+  it("keeps image hits from the stream and from a saved message", () => {
+    const image = {
+      file_id: "6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f",
+      file_name: "a.jpg",
+      score: 0.77,
+      content_path: "/api/files/6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f/content",
+    };
+    let turn = startTurn([], "схема", "2026-10-18T20:00:00Z", "local-1", "images");
+    turn = applyStreamEvent(
+      turn,
+      {
+        type: "meta",
+        chat_id: "chat-1",
+        user_message_id: "user-1",
+        assistant_message_id: "assistant-1",
+        sources: [],
+        images: [image],
+      },
+      "2026-10-18T20:00:01Z",
+    );
+    expect(turn.messages[0].searchMode).toBe("images");
+    expect(turn.messages[1]).toMatchObject({ sources: [], images: [image], content: "" });
+
+    turn = applyStreamEvent(turn, { type: "delta", content: "Найдено изображений: 1." }, "2026-10-18T20:00:02Z");
+    turn = applyStreamEvent(turn, { type: "done", finish_reason: "stop" }, "2026-10-18T20:00:03Z");
+    expect(turn.messages[1]).toMatchObject({
+      content: "Найдено изображений: 1.",
+      saved: true,
+      images: [image],
+    });
+
+    const saved = fromServerMessage({
+      message_id: "assistant-1",
+      role: "assistant",
+      content: "Найдено изображений: 1.",
+      sources: [],
+      images: [image],
+      created_at: "2026-10-18T20:01:02Z",
+    });
+    expect(saved.images).toEqual([image]);
+
+    turn = startTurn([], "схема", "2026-10-18T20:00:00Z", "local-2", "images");
+    turn = applyStreamEvent(
+      turn,
+      { type: "error", code: "upstream_timeout", message: "LLM timed out" },
+      "2026-10-18T20:00:01Z",
+    );
+    expect(turn.messages[0].retryMode).toBe("images");
+    expect(turn.messages[0].retryContent).toBe("схема");
   });
 });

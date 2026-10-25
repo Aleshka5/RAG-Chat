@@ -51,6 +51,7 @@ docs/
 | US-7 | `cursor/chat-cc69` | `services/chat` |
 | US-8 | `cursor/frontend-cc69` | `frontend` |
 | US-9 | `cursor/retrieval-only-2bef` | `services/chat`, `frontend`, нормативные абзацы сценария в `docs/` |
+| US-10 | `cursor/us10-image-search-ea6f` | `services/embedding`, `services/file-collector`, `services/processor`, `services/deletion-worker`, `services/chat`, `services/rag-edge`, `frontend`, `packages/rag-common`, нормативные абзацы сценария в `docs/` |
 
 ## Чем пользоваться
 
@@ -80,6 +81,6 @@ docs/
 
 ## Эмбеддинги
 
-Считать вектор через PyTorch в этом сервисе не нужно. Инференс текста — `llama-server` из llama.cpp внутри контейнера `embedding`. Сборка должна знать архитектуру `gemma-embedding2`. Контракт `POST /embed` остаётся на FastAPI: префиксы, размер пачки и проверка вектора. Processor и Chat к llama-server не ходят. Подробности — в `docs/internal-services.md`.
+Считать вектор через PyTorch в этом сервисе не нужно. Инференс — `llama-server` из llama.cpp внутри контейнера `embedding`. Сборка должна знать архитектуру `gemma-embedding2`. Контракт `POST /embed` остаётся на FastAPI: префиксы, размер пачки и проверка вектора. `POST /embed/image` в том же процессе принимает изображения без текстового префикса. Processor и Chat к llama-server не ходят. Подробности — в `docs/internal-services.md`.
 
-Веса float16 не загружать. Файл проектора изображения и звука не загружать.
+Веса float16 не загружать. Проектор звука не загружать. Проектор изображения `EMBEDDING_MMPROJ` (`mmproj-embeddinggemma-2-Q8_0.gguf`) загружается флагом `--mmproj` и нужен маршруту `POST /embed/image`. Без этого файла вызов изображения заканчивается `502`.
