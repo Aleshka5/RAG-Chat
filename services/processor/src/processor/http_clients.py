@@ -165,7 +165,7 @@ class EmbeddingClient:
             if response.status_code == 200:
                 return _image_embedding(response, dimension=self._dimension, model=self._model)
             if response.status_code == 400:
-                raise PermanentFailure("embedding_failed")
+                raise PermanentFailure("unsupported_image")
             if 500 <= response.status_code <= 599:
                 raise _RetryableHttp(response.status_code)
             raise _BadResponse(f"embedding http {response.status_code}")
@@ -233,7 +233,7 @@ def _image_embedding(response: httpx.Response, *, dimension: int, model: str) ->
     except ValueError as exc:
         raise _RetryableHttp(200) from exc
     if isinstance(body, dict) and _embedding_is_empty(body.get("embeddings")):
-        raise PermanentFailure("embedding_failed")
+        raise PermanentFailure("unsupported_image")
     return _embeddings(response, expected=1, dimension=dimension, model=model)[0]
 
 

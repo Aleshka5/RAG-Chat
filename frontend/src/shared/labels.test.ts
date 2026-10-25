@@ -13,6 +13,8 @@ const CODES = [
   "index_write_failed",
   "metadata_update_failed",
   "no_extractable_text",
+  "unsupported_image",
+  "image_too_large",
   "enqueue_failed",
   "processing_attempts_exceeded",
 ] as const;
@@ -26,6 +28,8 @@ describe("file error labels", () => {
       index_write_failed: "Could not write the index",
       metadata_update_failed: "Could not save the status",
       no_extractable_text: "No text found in the document",
+      unsupported_image: "The image is damaged or is not a supported image",
+      image_too_large: "The image is larger than the allowed size",
       enqueue_failed: "Could not queue the file",
       processing_attempts_exceeded: "Processing stopped several times and did not finish",
     });

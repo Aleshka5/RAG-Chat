@@ -246,7 +246,7 @@ def test_embed_image_posts_one_image_and_keeps_400_and_empty_permanent() -> None
     )
     with pytest.raises(PermanentFailure) as exc:
         bad.embed_image(raw, "req-img")
-    assert exc.value.code == "embedding_failed"
+    assert exc.value.code == "unsupported_image"
     assert calls["n"] == 1
     assert delays == []
     bad.close()
@@ -271,7 +271,7 @@ def test_embed_image_posts_one_image_and_keeps_400_and_empty_permanent() -> None
     before = len(delays)
     with pytest.raises(PermanentFailure) as empty_exc:
         blank.embed_image(raw, "req-img")
-    assert empty_exc.value.code == "embedding_failed"
+    assert empty_exc.value.code == "unsupported_image"
     assert calls["n"] == 2
     assert len(delays) == before
     blank.close()

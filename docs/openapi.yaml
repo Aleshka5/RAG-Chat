@@ -734,6 +734,7 @@ components:
             - enqueue_failed
             - processing_attempts_exceeded
             - unsupported_image
+            - image_too_large
         progress:
           nullable: true
           allOf:

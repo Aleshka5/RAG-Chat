@@ -102,9 +102,9 @@
 
 ### Временный и постоянный сбой
 
-Постоянные: битое тело сообщения, чужой `s3_key`, расхождение `content_type`, `corrupt_pdf`, `unsupported_image`, `no_extractable_text`, `processing_attempts_exceeded`. Сначала запись `error`, затем `nack` без requeue. Повтор записи статуса — один. Если записать `error` не удалось, сообщение всё равно уходит в DLQ.
+Постоянные: битое тело сообщения, чужой `s3_key`, расхождение `content_type`, `corrupt_pdf`, `unsupported_image`, `image_too_large`, `no_extractable_text`, `processing_attempts_exceeded`. Сначала запись `error`, затем `nack` без requeue. Повтор записи статуса — один. Если записать `error` не удалось, сообщение всё равно уходит в DLQ.
 
-`unsupported_image` покрывает неразобранные байты после скачивания, `400` эмбеддера и пустой вектор. `502` и `504` эмбеддера постоянными сами по себе не являются.
+`unsupported_image` покрывает неразобранные байты после скачивания, `400` эмбеддера и пустой вектор. `image_too_large` — объект больше `EMBEDDING_MAX_IMAGE_BYTES`: эмбеддер не вызывается. `502` и `504` эмбеддера постоянными сами по себе не являются.
 
 Временные: MinIO, OCR, Embedding, Qdrant или MongoDB недоступны после коротких повторов шага. Статус остаётся `processing`, контрольная точка не откатывается. Worker спит `min(60, 2^process_attempts)` секунд и делает `nack(requeue=true)`. Следующая доставка продолжает с `pages_done` и `chunks_done`. Пока идёт пауза, канал с `prefetch=1` следующее сообщение не берёт.
 

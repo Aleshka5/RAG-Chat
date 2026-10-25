@@ -200,11 +200,11 @@ class Pipeline:
         try:
             ensure_decodable_image(data, message.content_type)
         except UndecodableImage as exc:
-            raise PermanentFailure("undecodable_image") from exc
+            raise PermanentFailure("unsupported_image") from exc
         self._require_processing(message.file_id)
         vector = self.embedding.embed_image(data, request_id)
         if len(vector) == 0:
-            raise PermanentFailure("embedding_failed")
+            raise PermanentFailure("unsupported_image")
         file = self._require_processing(message.file_id)
         s3_key = file["s3_key"]
         point = {

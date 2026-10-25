@@ -64,6 +64,7 @@ stateDiagram-v2
 | `metadata_update_failed` | Финальное обновление MongoDB не выполнено. |
 | `no_extractable_text` | После извлечения и OCR не осталось ни одного чанка. |
 | `unsupported_image` | Байты изображения не опознаны, эмбеддер вернул `400` или вектор пуст. Сразу `error` и DLQ. |
+| `image_too_large` | Изображение больше `EMBEDDING_MAX_IMAGE_BYTES` после декодирования. Сразу `error` и DLQ, эмбеддер не вызывается. |
 | `enqueue_failed` | Публикация `doc.process` не подтвердилась. Повторно публикует только sweeper Processor. |
 | `processing_attempts_exceeded` | Восемь доставок `doc.process` не довели файл до `ready`. |
 

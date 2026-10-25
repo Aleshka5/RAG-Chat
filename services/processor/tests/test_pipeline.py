@@ -571,7 +571,7 @@ def test_image_embedder_400_is_a_permanent_dead_letter() -> None:
     assert broker.current is None
     saved = store.get_by_file_id(document["file_id"])
     assert saved["status"] == "error"
-    assert saved["error"] == "embedding_failed"
+    assert saved["error"] == "unsupported_image"
     assert saved["page_count"] is None
     assert len(embedding.image_calls) == 1
     assert embedding.calls == []
@@ -621,7 +621,7 @@ def test_empty_image_embedding_is_permanent() -> None:
     assert result.requeue is False
     saved = store.get_by_file_id(document["file_id"])
     assert saved["status"] == "error"
-    assert saved["error"] == "embedding_failed"
+    assert saved["error"] == "unsupported_image"
     assert len(embedding.image_calls) == 1
     assert qdrant.image_points == {}
 
@@ -636,7 +636,7 @@ def test_undecodable_and_oversized_images_skip_the_embedder() -> None:
     assert result.action == "nack" and result.requeue is False
     saved = store.get_by_file_id(document["file_id"])
     assert saved["status"] == "error"
-    assert saved["error"] == "undecodable_image"
+    assert saved["error"] == "unsupported_image"
     assert embedding.image_calls == []
     assert embedding.calls == []
     assert ocr.calls == []

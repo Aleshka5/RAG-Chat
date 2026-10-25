@@ -223,7 +223,7 @@ class FakeEmbed:
         if self.on_image is not None:
             self.on_image(image, request_id)
         if self.image_status == 400:
-            raise PermanentFailure("embedding_failed")
+            raise PermanentFailure("unsupported_image")
         if self.image_status is not None and 500 <= self.image_status <= 599:
             raise TransientFailure(
                 f"embedding http {self.image_status}",

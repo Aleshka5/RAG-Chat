@@ -26,6 +26,7 @@
 |-----|---------|
 | `corrupt_pdf` | The file is damaged or is not a PDF |
 | `unsupported_image` | The image is damaged or is not a supported image |
+| `image_too_large` | The image is larger than the allowed size |
 | `storage_read_failed` | Could not read the file from storage |
 | `embedding_failed` | Could not build the vectors |
 | `index_write_failed` | Could not write the index |
