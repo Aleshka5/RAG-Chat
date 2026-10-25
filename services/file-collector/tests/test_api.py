@@ -981,3 +981,105 @@ def test_content_dependency_failure_is_503(stack) -> None:
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "dependency_unavailable"
     assert files.docs[file_id]["status"] == "uploaded"
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 24
+GIF = b"GIF89a" + b"\x00" * 24
+WEBP = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 16
+
+
+def upload_image(
+    client,
+    user_id,
+    content=PNG,
+    name="photo.png",
+    content_type="image/png",
+):
+    return client.post(
+        "/api/files/images",
+        headers=auth(user_id),
+        files={"file": (name, content, content_type)},
+    )
+
+
+def test_image_multipart_upload_stores_bytes_and_publishes_content_type(stack) -> None:
+    client, files, objects, publisher = stack
+    response = upload_image(client, USER_A, name="photo.png")
+    assert response.status_code == 202
+    card = response.json()
+    assert card["content_type"] == "image/png"
+    assert card["page_count"] is None
+    assert card["status"] == "uploaded"
+    document = files.docs[card["file_id"]]
+    assert document["s3_key"] == f"files/{USER_A}/{card['file_id']}/photo.png"
+    assert objects.objects[document["s3_key"]] == PNG
+    assert len(publisher.messages) == 1
+    routing_key, body, _properties = publisher.messages[0]
+    assert routing_key == "doc.process"
+    assert body["content_type"] == "image/png"
+    assert body["s3_key"] == document["s3_key"]
+
+
+def test_image_multipart_detects_each_type_from_bytes(stack) -> None:
+    client, _files, _objects, publisher = stack
+    cases = (
+        (PNG, "a.png", "image/png"),
+        (JPEG, "b.jpg", "image/jpeg"),
+        (WEBP, "c.webp", "image/webp"),
+        (GIF, "d.gif", "image/gif"),
+    )
+    for content, name, expected in cases:
+        response = upload_image(client, USER_A, content=content, name=name)
+        assert response.status_code == 202, response.text
+        assert response.json()["content_type"] == expected
+    published = [body["content_type"] for _key, body, _properties in publisher.messages]
+    assert published == [expected for _content, _name, expected in cases]
+
+
+def test_image_multipart_rejects_bytes_that_are_not_an_image(stack) -> None:
+    client, files, objects, publisher = stack
+    for content, declared in (
+        (PDF, "application/pdf"),
+        (b"%PDF-1.4\n", "image/png"),
+        (b"not an image", "image/png"),
+        (b"", "image/png"),
+    ):
+        response = upload_image(client, USER_A, content=content, content_type=declared)
+        assert response.status_code == 415
+        assert response.json()["error"]["code"] == "unsupported_media_type"
+    assert files.docs == {}
+    assert objects.puts == []
+    assert publisher.messages == []
+
+
+def test_document_multipart_still_rejects_image_bytes(stack) -> None:
+    client, files, objects, publisher = stack
+    response = upload(client, USER_A, content=PNG, name="photo.png", content_type="image/png")
+    assert response.status_code == 415
+    assert response.json()["error"]["code"] == "unsupported_media_type"
+    assert files.docs == {}
+    assert objects.puts == []
+    assert publisher.messages == []
+
+
+def test_image_multipart_size_limit_is_413(stack) -> None:
+    app, _files, objects, publisher = build_app(max_upload_bytes=len(PNG) - 1)
+    with TestClient(app) as client:
+        response = upload_image(client, USER_A)
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "file_too_large"
+    assert objects.puts == []
+    assert publisher.messages == []
+
+
+def test_image_multipart_duplicate_is_409(stack) -> None:
+    client, _files, objects, publisher = stack
+    first = upload_image(client, USER_A, name="one.png")
+    assert first.status_code == 202
+    again = upload_image(client, USER_A, name="two.png")
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "duplicate_file"
+    assert again.json()["error"]["details"]["file_id"] == first.json()["file_id"]
+    assert len(objects.objects) == 1
+    assert len(publisher.messages) == 1

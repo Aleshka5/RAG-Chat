@@ -44,6 +44,58 @@ async def upload_pdf(
     objects,
     publisher,
 ) -> dict:
+    return await _accept_upload(
+        request=request,
+        user_id=user_id,
+        request_id=request_id,
+        settings=settings,
+        files=files,
+        objects=objects,
+        publisher=publisher,
+        detect=_pdf_content_type,
+        pdf_extension=True,
+        unsupported_message="Only PDF is accepted",
+    )
+
+
+async def upload_image(
+    *,
+    request: Request,
+    user_id: str,
+    request_id: str,
+    settings: Settings,
+    files,
+    objects,
+    publisher,
+) -> dict:
+    """Multipart image intake. The bytes decide the type, not the declared one."""
+    return await _accept_upload(
+        request=request,
+        user_id=user_id,
+        request_id=request_id,
+        settings=settings,
+        files=files,
+        objects=objects,
+        publisher=publisher,
+        detect=_image_content_type,
+        pdf_extension=False,
+        unsupported_message="Only JPEG, PNG, WebP and GIF images are accepted",
+    )
+
+
+async def _accept_upload(
+    *,
+    request: Request,
+    user_id: str,
+    request_id: str,
+    settings: Settings,
+    files,
+    objects,
+    publisher,
+    detect,
+    pdf_extension: bool,
+    unsupported_message: str,
+) -> dict:
     limit = settings.max_upload_bytes
     form = None
     spool = None
@@ -64,8 +116,9 @@ async def upload_pdf(
                 "Invalid request",
                 {"fields": ["file"]},
             ) from exc
-        if not _is_pdf(spool):
-            raise ApiError(415, "unsupported_media_type", "Only PDF is accepted")
+        content_type = detect(spool)
+        if content_type is None:
+            raise ApiError(415, "unsupported_media_type", unsupported_message)
         digest = _sha256(spool)
         logger.debug(
             "upload sha256 %s length %s",
@@ -86,9 +139,10 @@ async def upload_pdf(
             file_id=file_id,
             user_id=user_id,
             file_name=file_name,
-            safe=safe_name(file_name),
+            safe=safe_name(file_name, pdf_extension=pdf_extension),
             file_size=size,
             content_sha256=digest,
+            content_type=content_type,
         )
         try:
             await objects.put(document["s3_key"], spool, size)
@@ -118,6 +172,7 @@ async def upload_pdf(
             created_at=created_at,
             request_id=request_id,
             timestamp=int(created_at.timestamp()),
+            content_type=content_type,
         )
         try:
             await publisher.publish(routing_key, body, properties)
@@ -464,10 +519,27 @@ async def _read_limited(upload: UploadFile, limit: int):
     return spool, total
 
 
-def _is_pdf(stream: BinaryIO) -> bool:
+def _pdf_content_type(stream: BinaryIO) -> str | None:
     header = stream.read(5)
     stream.seek(0)
-    return header.startswith(b"%PDF")
+    if header.startswith(b"%PDF"):
+        return PDF_CONTENT_TYPE
+    return None
+
+
+def _image_content_type(stream: BinaryIO) -> str | None:
+    """Detect one of the four accepted image types by its magic bytes."""
+    header = stream.read(16)
+    stream.seek(0)
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def _sha256(stream: BinaryIO) -> str:

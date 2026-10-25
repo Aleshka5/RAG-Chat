@@ -66,7 +66,7 @@ export function FilesPage() {
             <h1>Files</h1>
           </div>
         </div>
-        <p className="muted page-lead">Each PDF is uploaded in one request and processed in the background.</p>
+        <p className="muted page-lead">Each file is uploaded in one request and processed in the background.</p>
       </div>
 
       <label
@@ -82,12 +82,12 @@ export function FilesPage() {
           void acceptFiles(event.dataTransfer.files);
         }}
       >
-        <span className="dropzone-title">Drop a PDF here</span>
+        <span className="dropzone-title">Drop a PDF or an image here</span>
         <span className="dropzone-hint">or choose a file from disk</span>
         <input
           className="sr-only"
           type="file"
-          accept="application/pdf,.pdf"
+          accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png,image/webp,.webp,image/gif,.gif"
           multiple
           disabled={uploading}
           onChange={(event) => {
@@ -95,7 +95,7 @@ export function FilesPage() {
             event.target.value = "";
           }}
         />
-        <span className="btn">Choose PDF</span>
+        <span className="btn">Choose file</span>
       </label>
 
       {notice ? (
@@ -121,7 +121,7 @@ export function FilesPage() {
       {phase === "ready" && items.length === 0 ? (
         <EmptyBlock
           title="No files yet"
-          text="Upload a PDF. After it is processed, you can ask a question about it."
+          text="Upload a PDF or an image. After it is processed, you can ask a question about it."
         />
       ) : null}
 

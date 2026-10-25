@@ -40,7 +40,7 @@
 | 409 | `duplicate_file` | Активный файл этого пользователя с тем же SHA-256. Для регистрации — также тот же `s3_key`. Активный статус — любой, кроме `deleted`. В `details.file_id` — существующий id. Второе сообщение в очередь не ставится. |
 | 409 | `file_busy` | Удаление во время свежего `processing` или повторное удаление при `deleting`. |
 | 413 | `file_too_large` | Размер больше `MAX_UPLOAD_BYTES`. По умолчанию 500 МиБ. |
-| 415 | `unsupported_media_type` | Multipart и `POST /api/files/documents`: не PDF. Word и `text/plain` сюда же. `POST /api/files/images`: тип не из четырёх типов изображения. |
+| 415 | `unsupported_media_type` | Multipart `POST /api/files` и `POST /api/files/documents`: не PDF. Word и `text/plain` сюда же. Multipart `POST /api/files/images` и `POST /api/files/images` с манифестом: не JPEG, PNG, WebP или GIF. |
 | 500 | `enqueue_failed` | Метаданные записаны, публикация в очередь не удалась. |
 | 502 | `upstream_failed` | Embedding ответил ошибкой после повтора, либо LLM вернул HTTP 4xx кроме 429. Для потока — событие `error`, если текстовый токен уже ушёл клиенту. Недоступность LLM до первого токена при непустых источниках — не этот код. |
 | 503 | `dependency_unavailable` | MongoDB, Qdrant, MinIO или Embedding недоступны до начала ответа. |
@@ -87,9 +87,26 @@
 
 Поле `content_type` есть у каждой карточки, включая PDF и элемент списка.
 
-### `POST /api/files/documents` и `POST /api/files/images`
+### `POST /api/files/images` (multipart)
 
-Оба принимают JSON-манифест уже лежащего объекта. Тела загрузки нет. Пользователи и внутренние вызывающие ходят по одному контракту: `X-Auth-User-Id`, необязательный `X-Request-Id`, `X-Auth-Role: BLOCKED` даёт `403`. Отдельного сервисного секрета нет.
+Тот же `multipart/form-data` с полем `file`, что у `POST /api/files`, но байты — изображение. Браузерная форма загрузки ходит сюда.
+
+Приём:
+
+1. Заголовок пользователя валиден.
+2. Размер не больше `MAX_UPLOAD_BYTES`. Лишний байт — `413`, объект не пишется.
+3. Имя файла проходит очистку. Расширение не подменяется: объект получает имя из запроса.
+4. Тип определяется сигнатурой байтов: `\x89PNG` — `image/png`, `\xff\xd8\xff` — `image/jpeg`, `GIF87a` и `GIF89a` — `image/gif`, `RIFF` с `WEBP` на смещении 8 — `image/webp`. Иная сигнатура — `415` `unsupported_media_type`. Поле `content_type` из multipart не учитывается.
+5. Считается SHA-256 по записанным байтам. Активный файл пользователя с тем же хешем — `409`.
+6. Объект пишется в `files/{user_id}/{file_id}/{safe_name}`, документ вставляется со статусом `uploaded` и принятым `content_type`.
+7. Публикуется `doc.process` с этим `content_type`. Неудача — `500` `enqueue_failed`, как у PDF.
+8. Успех — `202` и та же карточка, что у загрузки. `page_count` — `null`.
+
+У каждого конвейера свой маршрут с байтами: PDF — `POST /api/files`, изображение — этот. Изображение на маршруте PDF — `415`, PDF на маршруте изображений — тоже `415`. Word и `text/plain` не принимает ни один.
+
+### `POST /api/files/documents` и `POST /api/files/images` (JSON-манифест)
+
+У `POST /api/files/images` это второе тело: тело выбирается по заголовку `Content-Type`. Здесь оба принимают JSON-манифест уже лежащего объекта. Тела загрузки нет. Пользователи и внутренние вызывающие ходят по одному контракту: `X-Auth-User-Id`, необязательный `X-Request-Id`, `X-Auth-Role: BLOCKED` даёт `403`. Отдельного сервисного секрета нет.
 
 ```json
 {
@@ -120,7 +137,7 @@
 5. Публикуется `doc.process` с этим `content_type` и этим `s3_key`. Подтверждение и ошибка публикации те же, что у загрузки: неудача даёт `error=enqueue_failed` и `500`.
 6. Успех — `202` и та же карточка, что у загрузки. У изображения `content_type` — принятый тип, `page_count` — `null`.
 
-Документ с `application/pdf` обрабатывается прежним конвейером в коллекцию `documents`. Изображение эмбеддится в коллекцию `images`. Регистрация документа сигнатуру `%PDF` не проверяет: тип решает поле `content_type`. Сигнатуру по-прежнему проверяет только multipart `POST /api/files`.
+Документ с `application/pdf` обрабатывается прежним конвейером в коллекцию `documents`. Изображение эмбеддится в коллекцию `images`. Регистрация документа сигнатуру `%PDF` не проверяет: тип решает поле `content_type`. Сигнатуру проверяют оба multipart-маршрута: `POST /api/files` для PDF и `POST /api/files/images` для изображения.
 
 ### `GET /api/files`
 

@@ -96,7 +96,7 @@ File Collector и Chat считают `X-Auth-User-Id` уже проверенн
 4. Processor забирает одно сообщение, переводит файл в `processing`, строит чанки, пишет Qdrant и ставит `ready` либо `error`.
 5. Клиент обновляет список, пока видит `uploaded`, `processing` или `deleting`.
 
-Регистрация `POST /api/files/documents` и `POST /api/files/images` не кладёт новое тело в MinIO. File Collector проверяет ключ, делает `HEAD`, пишет `uploaded` и публикует тот же `doc.process`. PDF из манифеста идёт в прежний конвейер. Изображение Processor отдаёт в `POST /embed/image` и пишет одну точку в `images`. Word и обычный текст на регистрации документа получают `415` и в очередь не попадают. Multipart по-прежнему принимает только PDF.
+Регистрация `POST /api/files/documents` и `POST /api/files/images` не кладёт новое тело в MinIO. File Collector проверяет ключ, делает `HEAD`, пишет `uploaded` и публикует тот же `doc.process`. PDF из манифеста идёт в прежний конвейер. Изображение Processor отдаёт в `POST /embed/image` и пишет одну точку в `images`. Word и обычный текст на регистрации документа получают `415` и в очередь не попадают. Multipart тоже разделён по конвейерам: `POST /api/files` принимает PDF, `POST /api/files/images` — изображение, и в этом случае байты пишутся в MinIO до публикации того же сообщения.
 
 ## Поток вопроса
 

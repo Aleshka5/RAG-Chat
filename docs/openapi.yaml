@@ -157,14 +157,25 @@ paths:
   /api/files/images:
     post:
       tags: [Files]
-      summary: Зарегистрировать уже лежащее в бакете изображение
+      summary: Принять изображение — байтами или регистрацией уже лежащего объекта
       description: |
-        Тот же манифест, что у документа. `content_type` — один из
-        `image/jpeg`, `image/png`, `image/webp`, `image/gif`.
+        Два тела у одного маршрута. `multipart/form-data`, поле `file` — браузерная
+        загрузка: байты копируются в бакет, тип определяет сигнатура, а SHA-256 считается
+        сервисом. JSON-манифест — регистрация объекта, который уже лежит в бакете: байты
+        не копируются, хеш не пересчитывается.
+        Принимаются `image/jpeg`, `image/png`, `image/webp`, `image/gif`.
         Иной тип — `415`. У карточки `page_count` равен null.
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
           application/json:
             schema:
               $ref: "#/components/schemas/ImageRegistration"
@@ -189,8 +200,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
         "415":
-          description: content_type не из четырёх типов изображения.
+          description: Байты не изображение одного из четырёх типов, либо content_type манифеста не из них.
           content:
             application/json:
               schema:

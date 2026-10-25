@@ -14,6 +14,7 @@ from file_collector.service import (
     get_pdf,
     list_pdfs,
     read_pdf,
+    upload_image,
     upload_pdf,
 )
 
@@ -100,6 +101,10 @@ def _file_id(file_id: str) -> str:
     return parsed
 
 
+def _is_multipart(request: Request) -> bool:
+    return "multipart/form-data" in request.headers.get("content-type", "").lower()
+
+
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
@@ -147,6 +152,18 @@ async def create_document(request: Request, user_id: str = Depends(require_user)
 
 @router.post("/api/files/images")
 async def create_image(request: Request, user_id: str = Depends(require_user)) -> JSONResponse:
+    """Image intake: multipart bytes, or a manifest of an object already in the bucket."""
+    if _is_multipart(request):
+        card = await upload_image(
+            request=request,
+            user_id=user_id,
+            request_id=request_id_of(request),
+            settings=request.app.state.settings,
+            files=request.app.state.files,
+            objects=request.app.state.objects,
+            publisher=request.app.state.publisher,
+        )
+        return JSONResponse(status_code=202, content=card)
     card = await accept_manifest(
         request=request,
         user_id=user_id,

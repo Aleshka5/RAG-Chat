@@ -64,9 +64,11 @@ describe("file error labels", () => {
       "The file is larger than the allowed size",
     );
     expect(requestErrorLabel(413, "", "Could not upload the file")).toBe("The file is larger than the allowed size");
-    expect(requestErrorLabel(415, "unsupported_media_type", "Could not upload the file")).toBe("This is not a PDF");
-    expect(requestErrorLabel(415, "", "Could not upload the file")).toBe("This is not a PDF");
-    expect(requestErrorLabel(409, "duplicate_file", "Could not upload the file")).toBe("This document already exists");
+    expect(requestErrorLabel(415, "unsupported_media_type", "Could not upload the file")).toBe(
+      "This file type is not supported",
+    );
+    expect(requestErrorLabel(415, "", "Could not upload the file")).toBe("This file type is not supported");
+    expect(requestErrorLabel(409, "duplicate_file", "Could not upload the file")).toBe("This file already exists");
     expect(requestErrorLabel(409, "file_busy", "Could not delete the file")).toBe(
       "Processing is still in progress or deletion has already started",
     );

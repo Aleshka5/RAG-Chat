@@ -33,10 +33,20 @@ export function getFile(fileId: string, signal?: AbortSignal): Promise<FileRecor
   return apiJson<FileRecord>(`/api/files/${encodeURIComponent(fileId)}`, { signal });
 }
 
+const IMAGE_UPLOAD_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
+
+export function isImageUpload(file: File): boolean {
+  if (isImageContentType(file.type)) return true;
+  const name = file.name.toLowerCase();
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 && IMAGE_UPLOAD_EXTENSIONS.has(name.slice(dot + 1));
+}
+
 export function uploadFile(file: File): Promise<FileRecord> {
   const body = new FormData();
   body.append("file", file, file.name);
-  return apiJson<FileRecord>("/api/files", { method: "POST", body });
+  const path = isImageUpload(file) ? "/api/files/images" : "/api/files";
+  return apiJson<FileRecord>(path, { method: "POST", body });
 }
 
 export function deleteFile(fileId: string): Promise<DeleteAccepted> {
