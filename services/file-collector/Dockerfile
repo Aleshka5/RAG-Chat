@@ -2,12 +2,13 @@ FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /uvx /bin/
 
-WORKDIR /app
+# The service pins rag-common at ../../packages/rag-common, so the image mirrors the
+# repository layout under /app: /app/services/file-collector sits beside
+# /app/packages/rag-common. Build context is the repository root.
+WORKDIR /app/services/file-collector
 
-# The lock pins rag-common at ../../packages/rag-common, which is /packages/rag-common
-# when this project is copied to /app. Build context is the repository root.
-COPY packages/rag-common/pyproject.toml /packages/rag-common/pyproject.toml
-COPY packages/rag-common/src /packages/rag-common/src
+COPY packages/rag-common/pyproject.toml /app/packages/rag-common/pyproject.toml
+COPY packages/rag-common/src /app/packages/rag-common/src
 COPY services/file-collector/pyproject.toml services/file-collector/uv.lock services/file-collector/README.md ./
 COPY services/file-collector/file_collector ./file_collector
 
@@ -22,4 +23,4 @@ ENV PYTHONUNBUFFERED=1 \
 
 EXPOSE 8081
 
-CMD ["/app/.venv/bin/python", "-m", "file_collector"]
+CMD ["/app/services/file-collector/.venv/bin/python", "-m", "file_collector"]
