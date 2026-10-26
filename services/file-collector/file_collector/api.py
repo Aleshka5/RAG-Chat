@@ -14,6 +14,7 @@ from file_collector.service import (
     get_pdf,
     list_pdfs,
     read_pdf,
+    rekey_object,
     upload_image,
     upload_pdf,
 )
@@ -199,6 +200,25 @@ async def delete_file(
         request_id=request_id_of(request),
     )
     return JSONResponse(status_code=202, content=body)
+
+
+@router.put("/api/files/{file_id}/object")
+async def replace_object(
+    file_id: str,
+    request: Request,
+    user_id: str = Depends(require_user),
+) -> JSONResponse:
+    card = await rekey_object(
+        request=request,
+        user_id=user_id,
+        file_id=_file_id(file_id),
+        request_id=request_id_of(request),
+        settings=request.app.state.settings,
+        files=request.app.state.files,
+        objects=request.app.state.objects,
+        publisher=request.app.state.publisher,
+    )
+    return JSONResponse(status_code=202, content=card)
 
 
 @router.get("/api/files/{file_id}/content")

@@ -61,7 +61,7 @@ def checkpoint_mismatch(checkpoint: dict[str, Any] | None, settings: Settings) -
     if tokens is not None and int(tokens) != settings.chunk_tokens:
         return True
     overlap = checkpoint.get("chunk_overlap")
-    if overlap is not None and int(overlap) != settings.chunk_overlap:
+    if overlap is not None and int(overlap) != settings.chunk_overlap_tokens:
         return True
     return False
 

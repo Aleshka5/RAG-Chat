@@ -1,10 +1,17 @@
 """In-memory Mongo, MinIO, and RabbitMQ stand-ins."""
 
 import copy
+from datetime import timedelta
 
 from file_collector.clock import utcnow
 from file_collector.errors import DuplicateActiveFile, ObjectNotFound, PublishError, StorageError
-from file_collector.schema import ACTIVE_STATUSES, deletion_allowed, file_indexes
+from file_collector.schema import (
+    ACTIVE_STATUSES,
+    deletion_allowed,
+    file_indexes,
+    rekey_filter,
+    rekey_update,
+)
 
 
 class FakeFiles:
@@ -16,6 +23,8 @@ class FakeFiles:
         self.reads = 0
         self.blind_lookups = 0
         self.fail_insert = False
+        self.updates: list[dict] = []
+        self.before_rekey = None
 
     async def connect(self) -> None:
         self.connected = True
@@ -116,6 +125,95 @@ class FakeFiles:
         document["status"] = "deleting"
         document["updated_at"] = now
         return "ok"
+
+    async def rekey(
+        self,
+        file_id: str,
+        user_id: str,
+        *,
+        observed_key: str,
+        new_key: str,
+        content_sha256: str,
+        same_key: bool,
+        now,
+        stale_seconds: int,
+    ) -> dict | None:
+        if self.before_rekey is not None:
+            self.before_rekey()
+        stale_before = now - timedelta(seconds=stale_seconds)
+        query = rekey_filter(
+            file_id,
+            user_id,
+            observed_key,
+            content_sha256,
+            same_key=same_key,
+            stale_before=stale_before,
+        )
+        update = rekey_update(new_key, now)
+        document = self.docs.get(file_id)
+        if (
+            document is None
+            or document["user_id"] != user_id
+            or not _rekey_matches(document, query)
+        ):
+            return None
+        for other in self.docs.values():
+            if other["file_id"] == file_id:
+                continue
+            if (
+                other["user_id"] == user_id
+                and other["s3_key"] == new_key
+                and other["status"] in ACTIVE_STATUSES
+            ):
+                raise DuplicateActiveFile(other["file_id"])
+        self.updates.append({"filter": copy.deepcopy(query), "update": copy.deepcopy(update)})
+        _apply_set(document, update["$set"])
+        return copy.deepcopy(document)
+
+
+def _rekey_matches(document: dict, query: dict) -> bool:
+    if document.get("file_id") != query["file_id"]:
+        return False
+    if document.get("user_id") != query["user_id"]:
+        return False
+    if document.get("s3_key") != query["s3_key"]:
+        return False
+    if document.get("content_sha256") != query["content_sha256"]:
+        return False
+    alternatives = query.get("$or")
+    if alternatives is not None:
+        return any(_rekey_clause(document, clause) for clause in alternatives)
+    return _rekey_clause(document, {"status": query["status"]})
+
+
+def _rekey_clause(document: dict, clause: dict) -> bool:
+    status = clause["status"]
+    if isinstance(status, dict):
+        if document.get("status") not in status["$in"]:
+            return False
+    elif document.get("status") != status:
+        return False
+    bound = clause.get("updated_at")
+    if bound is None:
+        return True
+    moment = document["updated_at"]
+    limit = bound["$lt"]
+    if moment.tzinfo is None and getattr(limit, "tzinfo", None) is not None:
+        moment = moment.replace(tzinfo=limit.tzinfo)
+    return moment < limit
+
+
+def _apply_set(document: dict, values: dict) -> None:
+    for key, value in values.items():
+        cursor = document
+        parts = key.split(".")
+        for part in parts[:-1]:
+            child = cursor.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                cursor[part] = child
+            cursor = child
+        cursor[parts[-1]] = value
 
 
 class FakeObjects:

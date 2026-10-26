@@ -3,7 +3,7 @@
 import logging
 from datetime import timedelta
 
-from pymongo import ASCENDING, DESCENDING
+from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.errors import ConfigurationError, DuplicateKeyError, PyMongoError
 
 from file_collector.clock import utcnow
@@ -14,6 +14,8 @@ from file_collector.schema import (
     deletion_allowed,
     deletion_claim_filter,
     file_indexes,
+    rekey_filter,
+    rekey_update,
 )
 
 logger = logging.getLogger("file_collector")
@@ -178,6 +180,43 @@ class MongoFiles:
         except PyMongoError as exc:
             raise StorageError("mongodb") from exc
         return "busy"
+
+    async def rekey(
+        self,
+        file_id: str,
+        user_id: str,
+        *,
+        observed_key: str,
+        new_key: str,
+        content_sha256: str,
+        same_key: bool,
+        now,
+        stale_seconds: int,
+    ) -> dict | None:
+        """Replace the key unless a concurrent delete already claimed the file."""
+        stale_before = now - timedelta(seconds=stale_seconds)
+        query = rekey_filter(
+            file_id,
+            user_id,
+            observed_key,
+            content_sha256,
+            same_key=same_key,
+            stale_before=stale_before,
+        )
+        try:
+            document = await self._collection().find_one_and_update(
+                query,
+                rekey_update(new_key, now),
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError as exc:
+            existing = await self.find_active_by_s3_key(user_id, new_key)
+            if existing is not None and existing["file_id"] != file_id:
+                raise DuplicateActiveFile(existing["file_id"]) from exc
+            raise StorageError("mongodb") from exc
+        except PyMongoError as exc:
+            raise StorageError("mongodb") from exc
+        return document
 
     def _collection(self):
         if self._files is None:

@@ -16,6 +16,8 @@ from file_collector.schema import (
     deletion_allowed,
     deletion_claim_filter,
     file_indexes,
+    rekey_filter,
+    rekey_update,
 )
 from rag_common.mongo import FILES_INDEXES
 
@@ -130,3 +132,42 @@ def test_fresh_processing_is_not_deletable_and_stale_processing_is() -> None:
     claim = deletion_claim_filter("file", "user", fresh)
     assert claim["$or"][1] == {"status": "processing", "updated_at": {"$lt": fresh}}
     assert claim["$or"][0]["status"]["$in"] == ["uploaded", "ready", "error"]
+
+
+def test_rekey_filter_excludes_deleting_and_resets_only_chunk_progress() -> None:
+    now = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+    stale_before = now - timedelta(seconds=900)
+    new_key = rekey_filter(
+        "file",
+        "user",
+        "old/key",
+        "ab" * 32,
+        same_key=False,
+        stale_before=stale_before,
+    )
+    assert new_key["s3_key"] == "old/key"
+    assert new_key["content_sha256"] == "ab" * 32
+    assert new_key["$or"][0]["status"]["$in"] == ["ready", "error"]
+    assert new_key["$or"][1] == {"status": "processing", "updated_at": {"$lt": stale_before}}
+    repeat = rekey_filter(
+        "file",
+        "user",
+        "old/key",
+        "ab" * 32,
+        same_key=True,
+        stale_before=stale_before,
+    )
+    assert repeat["status"]["$in"] == ["uploaded", "processing", "ready", "error"]
+    assert "deleting" not in repeat["status"]["$in"]
+    assert "deleted" not in repeat["status"]["$in"]
+    update = rekey_update("users/new", now)
+    assert set(update) == {"$set"}
+    assert update["$set"]["s3_key"] == "users/new"
+    assert update["$set"]["status"] == "processing"
+    assert update["$set"]["page_count"] is None
+    assert update["$set"]["checkpoint.chunks_done"] == 0
+    assert update["$set"]["checkpoint.chunks_total"] is None
+    assert "checkpoint.embedding_model" not in update["$set"]
+    assert "checkpoint.chunk_tokens" not in update["$set"]
+    assert "checkpoint.chunk_overlap" not in update["$set"]
+    assert "file_pages" not in update["$set"]

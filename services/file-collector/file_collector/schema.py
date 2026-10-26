@@ -83,6 +83,54 @@ def deletion_allowed(status: str, updated_at: datetime, now: datetime, stale_sec
     return False
 
 
+_REKEY_REPEAT_STATUSES = ("uploaded", "processing", "ready", "error")
+_REKEY_NEW_KEY_STATUSES = ("ready", "error")
+
+
+def rekey_filter(
+    file_id: str,
+    user_id: str,
+    observed_key: str,
+    content_sha256: str,
+    *,
+    same_key: bool,
+    stale_before: datetime,
+) -> dict:
+    """Match a file a concurrent delete has not already claimed.
+
+    A repeated key may refresh fresh ``processing`` and ``uploaded``. A new key
+    may move ``ready``, ``error``, or stale ``processing`` only.
+    """
+    query: dict = {
+        "file_id": file_id,
+        "user_id": user_id,
+        "s3_key": observed_key,
+        "content_sha256": content_sha256,
+    }
+    if same_key:
+        query["status"] = {"$in": list(_REKEY_REPEAT_STATUSES)}
+        return query
+    query["$or"] = [
+        {"status": {"$in": list(_REKEY_NEW_KEY_STATUSES)}},
+        {"status": "processing", "updated_at": {"$lt": stale_before}},
+    ]
+    return query
+
+
+def rekey_update(s3_key: str, now: datetime) -> dict:
+    """Set the new key and reset chunk progress. Other checkpoint fields stay."""
+    return {
+        "$set": {
+            "s3_key": s3_key,
+            "status": "processing",
+            "page_count": None,
+            "checkpoint.chunks_done": 0,
+            "checkpoint.chunks_total": None,
+            "updated_at": now,
+        }
+    }
+
+
 def file_card(document: dict) -> dict:
     status = document["status"]
     progress = None

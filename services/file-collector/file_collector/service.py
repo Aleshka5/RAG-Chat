@@ -1,4 +1,4 @@
-"""Upload, list, content, and delete use cases."""
+"""Upload, list, content, delete, and re-key use cases."""
 
 import hashlib
 import json
@@ -22,7 +22,7 @@ from file_collector.errors import (
 )
 from file_collector.messages import delete_publication, process_publication
 from file_collector.names import content_disposition, safe_name, validated_file_name
-from file_collector.schema import CONTENT_STATUSES, file_card, new_file_document
+from file_collector.schema import CONTENT_STATUSES, deletion_allowed, file_card, new_file_document
 
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -339,6 +339,100 @@ async def delete_pdf(
     return {"file_id": file_id, "status": "deleting"}
 
 
+async def rekey_object(
+    *,
+    request: Request,
+    user_id: str,
+    file_id: str,
+    request_id: str,
+    settings: Settings,
+    files,
+    objects,
+    publisher,
+) -> dict:
+    """Point an existing file at a new key and publish ``doc.process`` again."""
+    payload = await _read_manifest(request)
+    body = _validated_rekey(payload)
+    document = await files.get(file_id, user_id)
+    if document is None or document.get("status") in {"deleted", "deleting"}:
+        raise ApiError(404, "file_not_found", "File not found")
+    digest = body["content_sha256"]
+    if document.get("content_sha256") != digest:
+        raise ApiError(409, "content_changed", "Content hash does not match the stored file")
+    new_key = body["s3_key"]
+    same_key = document.get("s3_key") == new_key
+    now = utcnow()
+    if not same_key and _new_key_is_busy(document, now, settings.stale_processing_seconds):
+        raise ApiError(409, "file_busy", "File cannot be updated in its current state")
+    owner = document.get("object_owner")
+    if owner != "storage":
+        owner = "rag"
+    if _rejects_manifest_key(new_key, user_id, owner):
+        raise ApiError(404, "object_not_found", "Object not found")
+    try:
+        reported_size = await objects.head(new_key)
+    except ObjectNotFound as exc:
+        raise ApiError(404, "object_not_found", "Object not found") from exc
+    except StorageError as exc:
+        raise ApiError(503, "dependency_unavailable", "Dependency unavailable") from exc
+    if (
+        isinstance(reported_size, int)
+        and not isinstance(reported_size, bool)
+        and reported_size != body["file_size"]
+    ):
+        raise ApiError(
+            400,
+            "validation_error",
+            "Invalid request",
+            {"fields": ["file_size"]},
+        )
+    existing = await files.find_active_by_s3_key(user_id, new_key)
+    if existing is not None and existing["file_id"] != file_id:
+        raise _duplicate(existing["file_id"])
+    try:
+        updated = await files.rekey(
+            file_id,
+            user_id,
+            observed_key=document["s3_key"],
+            new_key=new_key,
+            content_sha256=digest,
+            same_key=same_key,
+            now=now,
+            stale_seconds=settings.stale_processing_seconds,
+        )
+    except DuplicateActiveFile as dup:
+        raise _duplicate(dup.file_id) from dup
+    except StorageError as exc:
+        raise ApiError(503, "dependency_unavailable", "Dependency unavailable") from exc
+    if updated is None:
+        raise ApiError(409, "file_busy", "File cannot be updated in its current state")
+    content_type = updated.get("content_type") or "application/pdf"
+    if not isinstance(content_type, str) or content_type == "":
+        content_type = "application/pdf"
+    await _publish_process(
+        files=files,
+        publisher=publisher,
+        document=updated,
+        file_name=updated["file_name"],
+        content_type=content_type,
+        request_id=request_id,
+    )
+    logger.info(
+        "file rekeyed",
+        extra={"request_id": request_id, "file_id": file_id, "user_id": user_id},
+    )
+    return file_card(updated)
+
+
+def _new_key_is_busy(document: dict, now, stale_seconds: int) -> bool:
+    status = document.get("status")
+    if status in {"ready", "error"}:
+        return False
+    if status == "processing":
+        return not deletion_allowed("processing", document["updated_at"], now, stale_seconds)
+    return True
+
+
 async def read_pdf(
     *,
     files,
@@ -470,6 +564,22 @@ def _validated_manifest(payload: dict, allowed_types: frozenset[str]) -> dict:
         "content_type": content_type,
         "origin": origin,
     }
+
+
+def _validated_rekey(payload: dict) -> dict:
+    fields: list[str] = []
+    s3_key = payload.get("s3_key")
+    if not _valid_s3_key(s3_key):
+        fields.append("s3_key")
+    file_size = payload.get("file_size")
+    if isinstance(file_size, bool) or not isinstance(file_size, int) or file_size < 1:
+        fields.append("file_size")
+    digest = payload.get("content_sha256")
+    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        fields.append("content_sha256")
+    if fields:
+        raise ApiError(400, "validation_error", "Invalid request", {"fields": fields})
+    return {"s3_key": s3_key, "file_size": file_size, "content_sha256": digest}
 
 
 def _unsupported_media_message(allowed_types: frozenset[str]) -> str:

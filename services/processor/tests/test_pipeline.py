@@ -475,6 +475,95 @@ def test_model_change_drops_points_and_resets_chunks_done() -> None:
     assert "old" not in qdrant.points
 
 
+def test_reindex_keeps_existing_points_until_upsert_overwrites_stable_ids() -> None:
+    settings = make_settings()
+    new_key = f"users/{USER_ID}/files/Новая папка/Отчёт.pdf"
+    document = file_document(
+        status="processing",
+        page_count=None,
+        s3_key=new_key,
+        checkpoint={
+            "pages_done": 1,
+            "pages_total": 1,
+            "chunks_done": 0,
+            "chunks_total": None,
+            "embedding_model": settings.embedding_model,
+            "chunk_tokens": settings.chunk_tokens,
+            "chunk_overlap": settings.chunk_overlap_tokens,
+        },
+    )
+    store = MemoryFiles()
+    store.add(document)
+    store.insert_page(
+        {
+            "file_id": document["file_id"],
+            "user_id": document["user_id"],
+            "page_number": 1,
+            "text": LONG,
+            "origin": "text",
+            "updated_at": document["updated_at"],
+        }
+    )
+    qdrant = FakeQdrant()
+    stale_id = point_id(document["file_id"], 0)
+    qdrant.points[stale_id] = {
+        "id": stale_id,
+        "vector": [9.0] * settings.embedding_dim,
+        "payload": {
+            "user_id": document["user_id"],
+            "document_id": document["file_id"],
+            "chunk_index": 0,
+            "text": "stale searchable text",
+        },
+    }
+    tail_id = point_id(document["file_id"], 50)
+    qdrant.points[tail_id] = {
+        "id": tail_id,
+        "vector": [9.0] * settings.embedding_dim,
+        "payload": {
+            "user_id": document["user_id"],
+            "document_id": document["file_id"],
+            "chunk_index": 50,
+            "text": "tail from the previous index",
+        },
+    }
+    upserted_ids: list[str] = []
+    original_upsert = qdrant.upsert_points
+
+    def capture_upsert(points: list[dict]) -> None:
+        if not upserted_ids:
+            assert not any(op[0] == "delete_file" for op in qdrant.ops)
+            assert qdrant.points[stale_id]["payload"]["text"] == "stale searchable text"
+            assert tail_id in qdrant.points
+        upserted_ids.extend(point["id"] for point in points)
+        original_upsert(points)
+
+    qdrant.upsert_points = capture_upsert
+    pipeline, ocr, _embedding, qdrant = build_pipeline(
+        settings,
+        store,
+        MemoryBlobs(pdf_bytes([LONG])),
+        qdrant=qdrant,
+    )
+    result = pipeline.handle(message_for(document), redelivered=False)
+    assert result.action == "ack"
+    assert ocr.calls == []
+    assert upserted_ids
+    assert upserted_ids == [point_id(document["file_id"], index) for index in range(len(upserted_ids))]
+    upsert_at = next(index for index, op in enumerate(qdrant.ops) if op[0] == "upsert")
+    assert all(op[0] != "delete_file" for op in qdrant.ops[:upsert_at])
+    assert not any(op[0] == "delete_file" for op in qdrant.ops)
+    tail_at = next(index for index, op in enumerate(qdrant.ops) if op[0] == "delete_tail")
+    assert tail_at > upsert_at
+    assert tail_id not in qdrant.points
+    assert qdrant.points[stale_id]["id"] == stale_id
+    assert qdrant.points[stale_id]["payload"]["text"] != "stale searchable text"
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "ready"
+    assert saved["s3_key"] == new_key
+    assert saved["page_count"] == 1
+
+
 def _image_document(**overrides):
     file_id = overrides.get("file_id", FILE_ID)
     user_id = overrides.get("user_id", USER_ID)
@@ -531,6 +620,63 @@ def test_image_message_embeds_once_into_the_images_collection() -> None:
     assert ("upsert_images", 1) in qdrant.ops
     assert not any(op[0] == "upsert" for op in qdrant.ops)
     assert blobs.reads == [document["s3_key"]]
+
+
+def test_image_reindex_upserts_the_new_key_without_deleting_first() -> None:
+    settings = make_settings()
+    new_key = f"users/{USER_ID}/photos/album/Снимок.png"
+    document = _image_document(status="processing")
+    document["s3_key"] = new_key
+    store = MemoryFiles()
+    store.add(document)
+    qdrant = FakeQdrant()
+    stale_id = point_id(document["file_id"], 0)
+    qdrant.image_points[stale_id] = {
+        "id": stale_id,
+        "vector": [0.5] * settings.embedding_dim,
+        "payload": {
+            "file_id": document["file_id"],
+            "document_id": document["file_id"],
+            "user_id": USER_ID,
+            "file_name": "Снимок.png",
+            "s3_key": f"files/{USER_ID}/{document['file_id']}/Snimok.png",
+            "s3_url": f"s3://storage/files/{USER_ID}/{document['file_id']}/Snimok.png",
+            "created_at": "2026-10-18T19:00:00Z",
+        },
+    }
+    original_upsert = qdrant.upsert_images
+
+    def capture_upsert(points: list[dict]) -> None:
+        assert not any(op[0] == "delete_image" for op in qdrant.ops)
+        assert qdrant.image_points[stale_id]["payload"]["s3_key"] != new_key
+        original_upsert(points)
+
+    qdrant.upsert_images = capture_upsert
+    pipeline, ocr, embedding, qdrant = build_pipeline(
+        settings,
+        store,
+        MemoryBlobs(raster_png()),
+        qdrant=qdrant,
+    )
+    result = pipeline.handle(
+        message_for(document, content_type="image/png", file_name="from-message.png"),
+        redelivered=False,
+    )
+    assert result.action == "ack"
+    assert ocr.calls == []
+    assert embedding.calls == []
+    assert len(embedding.image_calls) == 1
+    assert not any(op[0] == "delete_image" for op in qdrant.ops)
+    assert list(qdrant.image_points) == [stale_id]
+    point = qdrant.image_points[stale_id]
+    assert point["id"] == point_id(document["file_id"], 0)
+    assert point["payload"]["s3_key"] == new_key
+    assert point["payload"]["s3_url"] == f"s3://storage/{new_key}"
+    assert settings.s3_access_key not in point["payload"]["s3_url"]
+    assert settings.s3_secret_key not in point["payload"]["s3_url"]
+    saved = store.get_by_file_id(document["file_id"])
+    assert saved["status"] == "ready"
+    assert saved["s3_key"] == new_key
 
 
 def test_pdf_message_does_not_write_the_images_collection() -> None:
