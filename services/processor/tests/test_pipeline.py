@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 
+import pytest
 from tests.fakes import FakeEmbed, FakeOcr, FakeQdrant, MemoryBlobs, MemoryFiles
 from tests.support import (
     FILE_ID,
@@ -522,9 +523,11 @@ def test_image_message_embeds_once_into_the_images_collection() -> None:
         "user_id": USER_ID,
         "file_name": "Снимок.png",
         "s3_key": document["s3_key"],
-        "s3_url": f"s3://documents/{document['s3_key']}",
+        "s3_url": f"s3://storage/{document['s3_key']}",
         "created_at": "2026-10-18T20:00:00Z",
     }
+    assert settings.s3_access_key not in point["payload"]["s3_url"]
+    assert settings.s3_secret_key not in point["payload"]["s3_url"]
     assert ("upsert_images", 1) in qdrant.ops
     assert not any(op[0] == "upsert" for op in qdrant.ops)
     assert blobs.reads == [document["s3_key"]]
@@ -630,6 +633,7 @@ def test_empty_image_embedding_is_permanent() -> None:
 def test_undecodable_and_oversized_images_skip_the_embedder() -> None:
     settings = make_settings()
     document = _image_document()
+    document["content_type"] = "image/jpeg"
     store = MemoryFiles()
     store.add(document)
     pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, MemoryBlobs(b"not-an-image"))
@@ -746,3 +750,41 @@ def test_other_content_type_is_rejected_without_claiming_the_file() -> None:
     assert embedding.calls == []
     assert embedding.image_calls == []
     assert qdrant.ops == []
+
+
+def test_content_type_mismatch_nacks_without_reading_the_blob() -> None:
+    settings = make_settings()
+    document = file_document(content_type="application/pdf")
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(pdf_bytes([LONG]))
+    pipeline, ocr, embedding, qdrant = build_pipeline(settings, store, blobs)
+    result = pipeline.handle(message_for(document, content_type="image/png"), redelivered=False)
+    assert result.action == "nack" and result.requeue is False
+    assert store.get_by_file_id(document["file_id"])["status"] == "uploaded"
+    assert blobs.reads == []
+    assert ocr.calls == []
+    assert embedding.calls == []
+    assert embedding.image_calls == []
+    assert qdrant.ops == []
+
+
+@pytest.mark.parametrize(
+    "s3_key",
+    [
+        f"users/{USER_ID}/files/a.pdf",
+        f"files/{USER_ID}/Otchet.pdf",
+        f"rag/files/{USER_ID}/{FILE_ID}/a.pdf",
+    ],
+)
+def test_matching_document_is_read_by_the_given_key(s3_key: str) -> None:
+    settings = make_settings()
+    document = file_document(s3_key=s3_key, content_type="application/pdf")
+    store = MemoryFiles()
+    store.add(document)
+    blobs = MemoryBlobs(pdf_bytes([LONG]))
+    pipeline, _ocr, _embedding, _qdrant = build_pipeline(settings, store, blobs)
+    result = pipeline.handle(message_for(document, content_type="application/pdf"), redelivered=False)
+    assert result.action == "ack"
+    assert blobs.reads == [s3_key]
+    assert store.get_by_file_id(document["file_id"])["status"] == "ready"

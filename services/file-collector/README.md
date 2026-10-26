@@ -12,7 +12,7 @@ HTTP-сервис приёма PDF. Порт по умолчанию — `8081`.
 |------------|----------------|
 | `FILE_COLLECTOR_PORT` | `8081` |
 | `MAX_UPLOAD_BYTES` | `524288000` (500 МиБ) |
-| `S3_BUCKET` | `documents` |
+| `S3_BUCKET` | `storage` |
 | `S3_REGION` | `us-east-1` |
 | `RABBITMQ_EXCHANGE` | `doc_events` |
 | `RABBITMQ_DLX` | `doc_events_dlq` |

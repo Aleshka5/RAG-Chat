@@ -127,6 +127,77 @@ def test_missing_object_is_success(world: World) -> None:
     assert world.files.docs[FILE_ID].status == "deleted"
 
 
+def test_storage_owner_skips_object_delete(world: World) -> None:
+    world.add_file(status="deleting", object_owner="storage")
+
+    outcome = world.handler.handle(delete_body())
+
+    assert outcome is Outcome.ACK
+    assert ("delete_object", S3_KEY) not in world.events
+    assert S3_KEY in world.objects.objects
+    assert ("delete_points", USER_ID, FILE_ID) in world.events
+    assert ("delete_pages", FILE_ID) in world.events
+    assert (USER_ID, FILE_ID) not in world.vectors.points
+    assert FILE_ID not in world.files.pages
+    assert world.files.docs[FILE_ID].status == "deleted"
+
+
+def test_rag_owner_and_absent_owner_delete_object(world: World) -> None:
+    world.add_file(status="deleting", object_owner="rag")
+    assert world.handler.handle(delete_body()) is Outcome.ACK
+    assert ("delete_object", S3_KEY) in world.events
+    assert S3_KEY not in world.objects.objects
+    assert world.files.docs[FILE_ID].status == "deleted"
+
+    world.events.clear()
+    world.add_file(status="deleting")
+    assert world.files.docs[FILE_ID].object_owner == "rag"
+    assert world.handler.handle(delete_body()) is Outcome.ACK
+    assert ("delete_object", S3_KEY) in world.events
+    assert world.files.docs[FILE_ID].status == "deleted"
+
+
+def test_missing_row_with_foreign_prefix_skips_object_delete(world: World) -> None:
+    for prefix in ("users/", "_meta/", "shared/"):
+        key = f"{prefix}{USER_ID}/files/report.pdf"
+        world.events.clear()
+        world.objects.objects.clear()
+        world.vectors.points.clear()
+        world.files.pages.clear()
+        world.objects.objects[key] = b"%PDF"
+        world.vectors.points[(USER_ID, FILE_ID)] = ["orphan"]
+        world.files.pages[FILE_ID] = [{"page_number": 1}]
+
+        outcome = world.handler.handle(delete_body(s3_key=key))
+
+        assert outcome is Outcome.ACK
+        assert ("delete_object", key) not in world.events
+        assert key in world.objects.objects
+        assert ("delete_points", USER_ID, FILE_ID) in world.events
+        assert ("delete_pages", FILE_ID) in world.events
+        assert (USER_ID, FILE_ID) not in world.vectors.points
+        assert FILE_ID not in world.files.pages
+
+
+def test_foreign_prefixes_are_not_deleted_even_when_owner_is_rag(world: World) -> None:
+    for prefix in ("users/", "_meta/", "shared/"):
+        key = f"{prefix}{USER_ID}/note.bin"
+        world.events.clear()
+        world.objects.objects.clear()
+        world.vectors.points.clear()
+        world.files.pages.clear()
+        world.add_file(status="deleting", s3_key=key, object_owner="rag")
+
+        outcome = world.handler.handle(delete_body(s3_key=key))
+
+        assert outcome is Outcome.ACK
+        assert ("delete_object", key) not in world.events
+        assert key in world.objects.objects
+        assert world.files.docs[FILE_ID].status == "deleted"
+        assert (USER_ID, FILE_ID) not in world.vectors.points
+        assert FILE_ID not in world.files.pages
+
+
 def test_invalid_messages_nack_without_reads(world: World) -> None:
     world.add_file(status="deleting")
     bodies = [

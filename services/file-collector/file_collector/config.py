@@ -26,7 +26,7 @@ class Settings:
         s3_access_key: str,
         s3_secret_key: str,
         rabbitmq_url: str,
-        s3_bucket: str = "documents",
+        s3_bucket: str = "storage",
         s3_region: str = "us-east-1",
         rabbitmq_exchange: str = "doc_events",
         rabbitmq_dlx: str = "doc_events_dlq",
@@ -62,7 +62,7 @@ class Settings:
         max_upload = _parse_int("MAX_UPLOAD_BYTES", 524288000, invalid)
         stale = _parse_int("STALE_PROCESSING_SECONDS", 900, invalid)
         level = _parse_level("LOG_LEVEL", invalid)
-        bucket = _optional("S3_BUCKET", "documents")
+        bucket = _optional("S3_BUCKET", "storage")
         region = _optional("S3_REGION", "us-east-1")
         exchange = _optional("RABBITMQ_EXCHANGE", "doc_events")
         dlx = _optional("RABBITMQ_DLX", "doc_events_dlq")

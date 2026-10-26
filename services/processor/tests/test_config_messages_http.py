@@ -57,6 +57,7 @@ def test_default_batch_size_attempts_and_overlap_guard() -> None:
     assert settings.embedding_dim == 768
     assert settings.qdrant_collection == "documents"
     assert settings.qdrant_images_collection == "images"
+    assert settings.s3_bucket == "storage"
     env["QDRANT_IMAGES_COLLECTION"] = "photos"
     assert load_settings(env).qdrant_images_collection == "photos"
     env["QDRANT_IMAGES_COLLECTION"] = ""

@@ -52,6 +52,7 @@ def replace_record(record: FileRecord) -> FileRecord:
         updated_at=record.updated_at,
         delete_claimed_at=record.delete_claimed_at,
         error=record.error,
+        object_owner=record.object_owner,
     )
 
 
@@ -80,6 +81,7 @@ class World:
         s3_key: str = S3_KEY,
         user_id: str = USER_ID,
         error: str | None = None,
+        object_owner: str = "rag",
     ) -> None:
         self.files.docs[FILE_ID] = FileRecord(
             file_id=FILE_ID,
@@ -89,6 +91,7 @@ class World:
             updated_at=NOW if updated_at is None else updated_at,
             delete_claimed_at=delete_claimed_at,
             error=error,
+            object_owner=object_owner,
         )
         self.objects.objects[s3_key] = b"%PDF-1.7"
         self.vectors.points[(user_id, FILE_ID)] = ["point-a", "point-b"]

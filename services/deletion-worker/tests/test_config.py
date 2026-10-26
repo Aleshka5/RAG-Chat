@@ -21,7 +21,7 @@ def _env() -> dict[str, str]:
 def test_defaults(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.ERROR)
     settings = load_settings(_env())
-    assert settings.s3_bucket == "documents"
+    assert settings.s3_bucket == "storage"
     assert settings.s3_region == "us-east-1"
     assert settings.qdrant_collection == "documents"
     assert settings.qdrant_images_collection == "images"

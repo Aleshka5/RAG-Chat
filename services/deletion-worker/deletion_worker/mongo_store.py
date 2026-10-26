@@ -120,4 +120,13 @@ def _record(document: dict[str, Any]) -> FileRecord:
         updated_at=document.get("updated_at"),
         delete_claimed_at=document.get("delete_claimed_at"),
         error=document.get("error"),
+        object_owner=_object_owner(document.get("object_owner")),
     )
+
+
+def _object_owner(value: object) -> str:
+    if isinstance(value, str):
+        owner = value.strip()
+        if owner in {"rag", "storage"}:
+            return owner
+    return "rag"

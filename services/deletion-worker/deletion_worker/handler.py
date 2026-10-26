@@ -25,11 +25,12 @@ _ENTER_DELETING = {"uploaded", "ready", "error"}
 class DeletionHandler:
     """Apply one doc.delete delivery.
 
-    Order is fixed: claim, MinIO object, Qdrant points for user_id and
-    document_id in the document collection and then the image collection,
-    file_pages, then status deleted. Each storage step is idempotent so a
-    crash before ack is finished by the next delivery. A missing image
-    collection deletes nothing and the delivery continues.
+    Order is fixed: claim, MinIO object when RAG owns the key, Qdrant points
+    for user_id and document_id in the document collection and then the image
+    collection, file_pages, then status deleted. object_owner=storage and keys
+    under users/, _meta/, or shared/ skip the MinIO delete. Each storage step
+    is idempotent so a crash before ack is finished by the next delivery. A
+    missing image collection deletes nothing and the delivery continues.
     """
 
     def __init__(
@@ -89,7 +90,7 @@ class DeletionHandler:
         for _ in range(_REREAD_LIMIT):
             document = self._read_file(message.file_id)
             if document is None:
-                self._purge(message.user_id, message.file_id, message.s3_key)
+                self._purge(message.user_id, message.file_id, message.s3_key, "rag")
                 return Outcome.ACK
             if document.status == "deleted":
                 logger.info(
@@ -116,7 +117,12 @@ class DeletionHandler:
                 return Outcome.ACK
             if claim == "reread":
                 continue
-            self._purge(document.user_id, document.file_id, document.s3_key)
+            self._purge(
+                document.user_id,
+                document.file_id,
+                document.s3_key,
+                document.object_owner,
+            )
             if not self._mark_deleted(message.file_id):
                 raise PermanentMessageError("metadata_update_failed")
             logger.info(
@@ -192,8 +198,9 @@ class DeletionHandler:
                 extra=log_fields(file_id=file_id, reason="claim_failed"),
             )
 
-    def _purge(self, user_id: str, file_id: str, s3_key: str) -> None:
-        self._retry("minio", lambda: self._objects.delete_object(s3_key))
+    def _purge(self, user_id: str, file_id: str, s3_key: str, object_owner: str) -> None:
+        if _deletes_object(s3_key, object_owner):
+            self._retry("minio", lambda: self._objects.delete_object(s3_key))
         self._retry("qdrant", lambda: self._vectors.delete_points(user_id, file_id))
         self._retry("file_pages", lambda: self._files.delete_pages(file_id))
 
@@ -238,6 +245,15 @@ class DeletionHandler:
             return False
         age = (self._clock() - _as_utc(updated_at)).total_seconds()
         return age <= self._stale_processing_seconds
+
+
+_FOREIGN_PREFIXES = ("users/", "_meta/", "shared/")
+
+
+def _deletes_object(s3_key: str, object_owner: str) -> bool:
+    if s3_key.startswith(_FOREIGN_PREFIXES):
+        return False
+    return object_owner.strip() != "storage"
 
 
 def _as_utc(value: datetime) -> datetime:

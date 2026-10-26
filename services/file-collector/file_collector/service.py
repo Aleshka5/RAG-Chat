@@ -30,9 +30,12 @@ XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml
 DOCUMENT_CONTENT_TYPES = frozenset({PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE, XLSX_CONTENT_TYPE})
 IMAGE_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_FILES_PREFIX = re.compile(
-    r"^files/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/"
-)
+_KEY_UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+_FILES_PREFIX = re.compile(rf"^files/({_KEY_UUID})/")
+_RAG_FILES_PREFIX = re.compile(rf"^rag/files/({_KEY_UUID})/")
+_USERS_PREFIX = re.compile(rf"^users/({_KEY_UUID})/")
+_STORAGE_PREFIXES = ("users/", "_meta/", "shared/")
+_ORIGINS = frozenset({"rag", "storage"})
 
 logger = logging.getLogger("file_collector")
 
@@ -214,7 +217,7 @@ async def accept_manifest(
     payload = await _read_manifest(request)
     manifest = _validated_manifest(payload, allowed_types)
     s3_key = manifest["s3_key"]
-    if _foreign_files_prefix(s3_key, user_id):
+    if _rejects_manifest_key(s3_key, user_id, manifest["origin"]):
         raise ApiError(404, "object_not_found", "Object not found")
     try:
         reported_size = await objects.head(s3_key)
@@ -256,6 +259,7 @@ async def accept_manifest(
         content_sha256=digest,
         content_type=content_type,
         s3_key=s3_key,
+        object_owner=manifest["origin"],
     )
     try:
         await files.insert(document)
@@ -453,6 +457,7 @@ def _validated_manifest(payload: dict, allowed_types: frozenset[str]) -> dict:
     content_type = payload.get("content_type")
     if not isinstance(content_type, str):
         fields.append("content_type")
+    origin = _manifest_origin(payload, fields)
     if fields:
         raise ApiError(400, "validation_error", "Invalid request", {"fields": fields})
     if content_type not in allowed_types:
@@ -463,6 +468,7 @@ def _validated_manifest(payload: dict, allowed_types: frozenset[str]) -> dict:
         "content_sha256": digest,
         "file_size": file_size,
         "content_type": content_type,
+        "origin": origin,
     }
 
 
@@ -474,17 +480,33 @@ def _unsupported_media_message(allowed_types: frozenset[str]) -> str:
     return "Only PDF is accepted"
 
 
+def _manifest_origin(payload: dict, fields: list[str]) -> str:
+    if "origin" not in payload:
+        return "rag"
+    origin = payload["origin"]
+    if origin not in _ORIGINS:
+        fields.append("origin")
+        return "rag"
+    return origin
+
+
 def _valid_s3_key(value: object) -> bool:
     if not isinstance(value, str) or value == "":
         return False
     return not (value.startswith("/") or "\\" in value or ".." in value)
 
 
-def _foreign_files_prefix(s3_key: str, user_id: str) -> bool:
-    match = _FILES_PREFIX.match(s3_key)
-    if match is None:
-        return False
-    return match.group(1).lower() != user_id
+def _rejects_manifest_key(s3_key: str, user_id: str, origin: str) -> bool:
+    if origin == "storage":
+        match = _USERS_PREFIX.match(s3_key)
+        return match is None or match.group(1).lower() != user_id
+    if s3_key.startswith(_STORAGE_PREFIXES):
+        return True
+    for pattern in (_FILES_PREFIX, _RAG_FILES_PREFIX):
+        match = pattern.match(s3_key)
+        if match is not None and match.group(1).lower() != user_id:
+            return True
+    return False
 
 
 async def _parse_form(request: Request, limit: int):

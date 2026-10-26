@@ -110,6 +110,43 @@ def test_mongo_conditional_filters_and_indexes() -> None:
     assert database.pages.indexes[0][1]["unique"] is True
 
 
+def test_get_file_object_owner_defaults_to_rag() -> None:
+    database = _Database()
+    store = MongoFileStore(_Client(database))  # type: ignore[arg-type]
+    document: dict[str, object] = {
+        "file_id": FILE_ID,
+        "user_id": "91a0b1c2-3d4e-4f50-8617-18293a4b5c6d",
+        "s3_key": "files/a",
+        "status": "ready",
+        "updated_at": NOW,
+        "delete_claimed_at": None,
+    }
+    database.files.found = document
+    missing = store.get_file(FILE_ID)
+    assert missing is not None
+    assert missing.object_owner == "rag"
+
+    document["object_owner"] = ""
+    empty = store.get_file(FILE_ID)
+    assert empty is not None
+    assert empty.object_owner == "rag"
+
+    document["object_owner"] = "   "
+    blank = store.get_file(FILE_ID)
+    assert blank is not None
+    assert blank.object_owner == "rag"
+
+    document["object_owner"] = "storage"
+    storage = store.get_file(FILE_ID)
+    assert storage is not None
+    assert storage.object_owner == "storage"
+
+    document["object_owner"] = "rag"
+    rag = store.get_file(FILE_ID)
+    assert rag is not None
+    assert rag.object_owner == "rag"
+
+
 def test_s3_delete_uses_bucket_and_treats_missing_key_as_success() -> None:
     class Client:
         def __init__(self) -> None:

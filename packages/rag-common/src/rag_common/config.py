@@ -11,7 +11,7 @@ SECRET_NAMES = frozenset({"S3_ACCESS_KEY", "S3_SECRET_KEY", "LLM_API_KEY"})
 
 # Documented defaults. Absence means the variable has no default.
 DEFAULTS: dict[str, str] = {
-    "S3_BUCKET": "documents",
+    "S3_BUCKET": "storage",
     "S3_REGION": "us-east-1",
     "QDRANT_COLLECTION": "documents",
     "QDRANT_IMAGES_COLLECTION": "images",

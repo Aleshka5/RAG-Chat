@@ -17,6 +17,7 @@ class FileRecord:
     updated_at: datetime | None
     delete_claimed_at: datetime | None
     error: str | None = None
+    object_owner: str = "rag"
 
 
 @dataclass(frozen=True)

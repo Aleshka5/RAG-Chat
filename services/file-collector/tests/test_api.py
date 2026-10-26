@@ -136,13 +136,15 @@ def test_upload_stores_metadata_and_publishes_doc_process(stack) -> None:
     file_id = body["file_id"]
     assert _UUID.fullmatch(file_id)
     stored = files.docs[file_id]
-    assert stored["s3_key"] == f"files/{USER_A}/{file_id}/my_report.pdf"
+    assert stored["s3_key"] == f"rag/files/{USER_A}/{file_id}/my_report.pdf"
+    assert stored["object_owner"] == "rag"
     assert stored["content_sha256"] == hashlib.sha256(PDF).hexdigest()
     assert stored["content_type"] == "application/pdf"
     assert stored["delete_claimed_at"] is None
     assert stored["safe_name"] == "my_report.pdf"
     assert objects.objects[stored["s3_key"]] == PDF
     assert "s3_key" not in body
+    assert "object_owner" not in body
     assert "user_id" not in body
     assert "content_sha256" not in body
     routing, message, props = publisher.messages[0]
@@ -554,6 +556,7 @@ def test_image_manifest_stores_row_and_publishes_without_uploading(stack) -> Non
     file_id = body["file_id"]
     stored = files.docs[file_id]
     assert stored["s3_key"] == key
+    assert stored["object_owner"] == "rag"
     assert stored["content_sha256"] == "ab" * 32
     assert stored["file_size"] == len(payload)
     assert stored["content_type"] == "image/jpeg"
@@ -631,6 +634,7 @@ def test_document_manifest_accepts_pdf_and_keeps_caller_key(stack) -> None:
     assert body["page_count"] is None
     stored = files.docs[body["file_id"]]
     assert stored["s3_key"] == key
+    assert stored["object_owner"] == "rag"
     assert stored["safe_name"] == "notes.pdf"
     assert stored["content_type"] == "application/pdf"
     assert stored["content_sha256"] == "d" * 64
@@ -689,6 +693,7 @@ def test_document_manifest_accepts_docx_and_xlsx(stack) -> None:
         stored = files.docs[body["file_id"]]
         assert stored["content_type"] == content_type
         assert stored["s3_key"] == key
+        assert stored["object_owner"] == "rag"
         assert stored["safe_name"] == file_name
         assert stored["content_sha256"] == digest
         routing, message, _props = publisher.messages[-1]
@@ -1098,7 +1103,9 @@ def test_image_multipart_upload_stores_bytes_and_publishes_content_type(stack) -
     assert card["page_count"] is None
     assert card["status"] == "uploaded"
     document = files.docs[card["file_id"]]
-    assert document["s3_key"] == f"files/{USER_A}/{card['file_id']}/photo.png"
+    assert document["s3_key"] == f"rag/files/{USER_A}/{card['file_id']}/photo.png"
+    assert document["object_owner"] == "rag"
+    assert "object_owner" not in card
     assert objects.objects[document["s3_key"]] == PNG
     assert len(publisher.messages) == 1
     routing_key, body, _properties = publisher.messages[0]
@@ -1169,3 +1176,358 @@ def test_image_multipart_duplicate_is_409(stack) -> None:
     assert again.json()["error"]["details"]["file_id"] == first.json()["file_id"]
     assert len(objects.objects) == 1
     assert len(publisher.messages) == 1
+
+
+_DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def test_two_users_same_upload_get_distinct_rag_keys(stack) -> None:
+    client, files, objects, _publisher = stack
+    first = upload(client, USER_A, name="shared report.pdf")
+    second = upload(client, USER_B, name="shared report.pdf")
+    assert first.status_code == 202
+    assert second.status_code == 202
+    first_id = first.json()["file_id"]
+    second_id = second.json()["file_id"]
+    first_key = f"rag/files/{USER_A}/{first_id}/shared_report.pdf"
+    second_key = f"rag/files/{USER_B}/{second_id}/shared_report.pdf"
+    assert files.docs[first_id]["s3_key"] == first_key
+    assert files.docs[second_id]["s3_key"] == second_key
+    assert first_key != second_key
+    assert files.docs[first_id]["object_owner"] == "rag"
+    assert files.docs[second_id]["object_owner"] == "rag"
+    assert "object_owner" not in first.json()
+    assert "object_owner" not in second.json()
+    assert objects.objects[first_key] == PDF
+    assert objects.objects[second_key] == PDF
+    again = upload(client, USER_A, name="shared report.pdf")
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "duplicate_file"
+    assert again.json()["error"]["details"]["file_id"] == first_id
+
+
+def test_image_multipart_two_users_get_distinct_rag_keys(stack) -> None:
+    client, files, objects, _publisher = stack
+    first = upload_image(client, USER_A, name="photo.png")
+    second = upload_image(client, USER_B, name="photo.png")
+    assert first.status_code == 202
+    assert second.status_code == 202
+    first_id = first.json()["file_id"]
+    second_id = second.json()["file_id"]
+    first_key = f"rag/files/{USER_A}/{first_id}/photo.png"
+    second_key = f"rag/files/{USER_B}/{second_id}/photo.png"
+    assert files.docs[first_id]["s3_key"] == first_key
+    assert files.docs[second_id]["s3_key"] == second_key
+    assert files.docs[first_id]["object_owner"] == "rag"
+    assert files.docs[second_id]["object_owner"] == "rag"
+    assert objects.objects[first_key] == PNG
+    assert objects.objects[second_key] == PNG
+    again = upload_image(client, USER_A, name="again.png")
+    assert again.status_code == 409
+    assert again.json()["error"]["details"]["file_id"] == first_id
+
+
+def test_manifest_origin_sets_object_owner_and_keeps_caller_key(stack) -> None:
+    client, files, objects, publisher = stack
+    omitted_key = "incoming/office/notes.docx"
+    objects.objects[omitted_key] = b"docx"
+    omitted = post_manifest(
+        client,
+        "/api/files/documents",
+        USER_A,
+        _manifest(
+            s3_key=omitted_key,
+            file_name="notes.docx",
+            file_size=4,
+            content_sha256="1" * 64,
+            content_type=_DOCX_TYPE,
+        ),
+    )
+    assert omitted.status_code == 202
+    assert "object_owner" not in omitted.json()
+    omitted_doc = files.docs[omitted.json()["file_id"]]
+    assert omitted_doc["object_owner"] == "rag"
+    assert omitted_doc["s3_key"] == omitted_key
+
+    image_key = "incoming/user-photos/kept.jpg"
+    objects.objects[image_key] = b"jpeg"
+    image = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(s3_key=image_key, file_name="kept.jpg", content_sha256="2" * 64),
+    )
+    assert image.status_code == 202
+    assert "object_owner" not in image.json()
+    assert files.docs[image.json()["file_id"]]["object_owner"] == "rag"
+    assert files.docs[image.json()["file_id"]]["s3_key"] == image_key
+
+    own_rag = f"rag/files/{USER_A.upper()}/batch/notes.pdf"
+    objects.objects[own_rag] = b"%PDF"
+    explicit = post_manifest(
+        client,
+        "/api/files/documents",
+        USER_A,
+        _manifest(
+            s3_key=own_rag,
+            file_name="notes.pdf",
+            file_size=4,
+            content_sha256="5" * 64,
+            content_type="application/pdf",
+            origin="rag",
+        ),
+    )
+    assert explicit.status_code == 202
+    explicit_doc = files.docs[explicit.json()["file_id"]]
+    assert explicit_doc["object_owner"] == "rag"
+    assert explicit_doc["s3_key"] == own_rag
+
+    storage_key = f"users/{USER_A}/files/a.docx"
+    payload = b"docx-bytes"
+    objects.objects[storage_key] = payload
+    stored = post_manifest(
+        client,
+        "/api/files/documents",
+        USER_A,
+        _manifest(
+            s3_key=storage_key,
+            file_name="a.docx",
+            file_size=len(payload),
+            content_sha256="3" * 64,
+            content_type=_DOCX_TYPE,
+            origin="storage",
+        ),
+    )
+    assert stored.status_code == 202
+    card = stored.json()
+    assert set(card) == _CARD_KEYS
+    assert "object_owner" not in card
+    assert "s3_key" not in card
+    document = files.docs[card["file_id"]]
+    assert document["object_owner"] == "storage"
+    assert document["s3_key"] == storage_key
+    assert document["safe_name"] == "a.docx"
+    fetched = client.get(f"/api/files/{card['file_id']}", headers=auth(USER_A))
+    assert set(fetched.json()) == _CARD_KEYS
+    listed = client.get("/api/files", headers=auth(USER_A))
+    assert all("object_owner" not in item for item in listed.json()["items"])
+    assert publisher.messages[-1][1]["s3_key"] == storage_key
+
+    photo_key = f"users/{USER_A.upper()}/photos/originals/a.jpg"
+    photo = b"\xff\xd8\xff\xd9"
+    objects.objects[photo_key] = photo
+    photo_response = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=photo_key,
+            file_name="a.jpg",
+            file_size=len(photo),
+            content_sha256="4" * 64,
+            origin="storage",
+        ),
+    )
+    assert photo_response.status_code == 202
+    photo_doc = files.docs[photo_response.json()["file_id"]]
+    assert photo_doc["object_owner"] == "storage"
+    assert photo_doc["s3_key"] == photo_key
+    assert "object_owner" not in photo_response.json()
+    assert objects.puts == []
+    assert objects.gets == 0
+    assert objects.objects[storage_key] == payload
+    assert objects.objects[photo_key] == photo
+
+
+def test_manifest_rejects_bad_origin(stack) -> None:
+    client, files, objects, publisher = stack
+    cases = (
+        ("/api/files/documents", _DOCX_TYPE, "a.docx", "incoming/office/a.docx"),
+        ("/api/files/images", "image/jpeg", "a.jpg", "incoming/user-photos/a.jpg"),
+    )
+    for path, content_type, file_name, key in cases:
+        objects.objects[key] = b"body"
+        for origin in ("external", 1, None, ""):
+            response = post_manifest(
+                client,
+                path,
+                USER_A,
+                _manifest(
+                    s3_key=key,
+                    file_name=file_name,
+                    file_size=4,
+                    content_sha256="a" * 64,
+                    content_type=content_type,
+                    origin=origin,
+                ),
+            )
+            assert response.status_code == 400, (path, origin)
+            error = response.json()["error"]
+            assert error["code"] == "validation_error"
+            assert error["details"]["fields"] == ["origin"]
+    assert files.docs == {}
+    assert publisher.messages == []
+    assert objects.puts == []
+    assert objects.gets == 0
+
+
+def test_manifest_rejects_foreign_and_storage_owned_prefixes(stack) -> None:
+    client, files, objects, publisher = stack
+    routes = (
+        ("/api/files/documents", _DOCX_TYPE, "a.docx"),
+        ("/api/files/images", "image/jpeg", "a.jpg"),
+    )
+    foreign_keys = (
+        f"users/{USER_B}/files/a.bin",
+        f"files/{USER_B}/a.bin",
+        f"rag/files/{USER_B}/item/a.bin",
+    )
+    owned_but_wrong_origin = (
+        (f"users/{USER_A}/files/owned.bin", None),
+        (f"users/{USER_A}/files/owned.bin", "rag"),
+        ("_meta/backups/a.bin", None),
+        ("shared/room/a.bin", None),
+        (f"files/{USER_A}/item/a.bin", "storage"),
+        (f"rag/files/{USER_A}/item/a.bin", "storage"),
+        ("incoming/user-photos/nope.bin", "storage"),
+    )
+    for path, content_type, file_name in routes:
+        for key in foreign_keys:
+            objects.objects[key] = b"body"
+            for origin in (None, "storage"):
+                _assert_object_not_found(
+                    client,
+                    objects,
+                    path,
+                    key,
+                    content_type=content_type,
+                    file_name=file_name,
+                    origin=origin,
+                )
+        for key, origin in owned_but_wrong_origin:
+            objects.objects[key] = b"body"
+            _assert_object_not_found(
+                client,
+                objects,
+                path,
+                key,
+                content_type=content_type,
+                file_name=file_name,
+                origin=origin,
+            )
+    assert files.docs == {}
+    assert publisher.messages == []
+    assert objects.puts == []
+
+
+def _assert_object_not_found(
+    client,
+    objects,
+    path: str,
+    key: str,
+    *,
+    content_type: str,
+    file_name: str,
+    origin: str | None,
+) -> None:
+    objects.objects[key] = b"body"
+    payload = _manifest(
+        s3_key=key,
+        file_name=file_name,
+        file_size=4,
+        content_sha256="b" * 64,
+        content_type=content_type,
+    )
+    if origin is not None:
+        payload["origin"] = origin
+    response = post_manifest(client, path, USER_A, payload)
+    assert response.status_code == 404, (path, key, origin)
+    assert response.json()["error"]["code"] == "object_not_found"
+
+
+def test_storage_key_registers_again_after_deleted(stack) -> None:
+    client, files, objects, publisher = stack
+    key = f"users/{USER_A}/files/a.docx"
+    payload = b"docx"
+    objects.objects[key] = payload
+    body = _manifest(
+        s3_key=key,
+        file_name="a.docx",
+        file_size=len(payload),
+        content_sha256="a" * 64,
+        content_type=_DOCX_TYPE,
+        origin="storage",
+    )
+    first = post_manifest(client, "/api/files/documents", USER_A, body)
+    assert first.status_code == 202
+    file_id = first.json()["file_id"]
+    duplicate = post_manifest(client, "/api/files/documents", USER_A, body)
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "duplicate_file"
+    assert duplicate.json()["error"]["details"]["file_id"] == file_id
+    files.docs[file_id]["status"] = "deleted"
+    again = post_manifest(client, "/api/files/documents", USER_A, body)
+    assert again.status_code == 202
+    new_id = again.json()["file_id"]
+    assert new_id != file_id
+    assert files.docs[new_id]["s3_key"] == key
+    assert files.docs[new_id]["object_owner"] == "storage"
+    assert files.docs[new_id]["content_sha256"] == "a" * 64
+    assert objects.puts == []
+    assert objects.objects[key] == payload
+    assert len(publisher.messages) == 2
+
+
+def test_storage_owned_content_returns_object_bytes(stack) -> None:
+    client, _files, objects, _publisher = stack
+    docx_key = f"users/{USER_A}/files/a.docx"
+    docx_bytes = b"PK\x03\x04docx"
+    objects.objects[docx_key] = docx_bytes
+    docx = post_manifest(
+        client,
+        "/api/files/documents",
+        USER_A,
+        _manifest(
+            s3_key=docx_key,
+            file_name="Отчёт.docx",
+            file_size=len(docx_bytes),
+            content_sha256="7" * 64,
+            content_type=_DOCX_TYPE,
+            origin="storage",
+        ),
+    )
+    assert docx.status_code == 202
+    assert "object_owner" not in docx.json()
+    docx_body = client.get(
+        f"/api/files/{docx.json()['file_id']}/content",
+        headers=auth(USER_A),
+    )
+    assert docx_body.status_code == 200
+    assert docx_body.content == docx_bytes
+    assert docx_body.headers["content-type"] == _DOCX_TYPE
+    assert docx_body.headers["content-length"] == str(len(docx_bytes))
+
+    image_key = f"users/{USER_A}/photos/originals/a.jpg"
+    image_bytes = JPEG
+    objects.objects[image_key] = image_bytes
+    image = post_manifest(
+        client,
+        "/api/files/images",
+        USER_A,
+        _manifest(
+            s3_key=image_key,
+            file_name="a.jpg",
+            file_size=len(image_bytes),
+            content_sha256="8" * 64,
+            origin="storage",
+        ),
+    )
+    assert image.status_code == 202
+    image_body = client.get(
+        f"/api/files/{image.json()['file_id']}/content",
+        headers=auth(USER_A),
+    )
+    assert image_body.status_code == 200
+    assert image_body.content == image_bytes
+    assert image_body.headers["content-type"] == "image/jpeg"
+    assert objects.puts == []

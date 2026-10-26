@@ -31,7 +31,7 @@ class Settings:
     rabbitmq_url: str
     embedding_url: str
     ocr_url: str
-    s3_bucket: str = "documents"
+    s3_bucket: str = "storage"
     s3_region: str = "us-east-1"
     qdrant_collection: str = "documents"
     qdrant_images_collection: str = "images"
@@ -75,7 +75,7 @@ def load_settings(environ: os._Environ[str] | dict[str, str] | None = None) -> S
             rabbitmq_url=env["RABBITMQ_URL"],
             embedding_url=env["EMBEDDING_URL"].rstrip("/"),
             ocr_url=env["OCR_URL"].rstrip("/"),
-            s3_bucket=_str(env, "S3_BUCKET", "documents"),
+            s3_bucket=_str(env, "S3_BUCKET", "storage"),
             s3_region=_str(env, "S3_REGION", "us-east-1"),
             qdrant_collection=_str(env, "QDRANT_COLLECTION", "documents"),
             qdrant_images_collection=_str(env, "QDRANT_IMAGES_COLLECTION", "images"),

@@ -39,6 +39,7 @@ def new_file_document(
     now: datetime | None = None,
     content_type: str = "application/pdf",
     s3_key: str | None = None,
+    object_owner: str = "rag",
 ) -> dict:
     moment = now or utcnow()
     return {
@@ -49,7 +50,8 @@ def new_file_document(
         "file_size": file_size,
         "content_type": content_type,
         "content_sha256": content_sha256,
-        "s3_key": s3_key if s3_key is not None else f"files/{user_id}/{file_id}/{safe}",
+        "s3_key": s3_key if s3_key is not None else f"rag/files/{user_id}/{file_id}/{safe}",
+        "object_owner": object_owner,
         "status": "uploaded",
         "page_count": None,
         "error": None,

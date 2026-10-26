@@ -43,7 +43,15 @@ def test_defaults_and_secret_is_not_in_the_missing_error(monkeypatch: pytest.Mon
     settings = Settings.from_env()
     assert settings.port == 8081
     assert settings.max_upload_bytes == 524288000
-    assert settings.s3_bucket == "documents"
+    assert settings.s3_bucket == "storage"
+    constructed = Settings(
+        mongodb_uri=_REQUIRED["MONGODB_URI"],
+        s3_endpoint=_REQUIRED["S3_ENDPOINT"],
+        s3_access_key=_REQUIRED["S3_ACCESS_KEY"],
+        s3_secret_key=_REQUIRED["S3_SECRET_KEY"],
+        rabbitmq_url=_REQUIRED["RABBITMQ_URL"],
+    )
+    assert constructed.s3_bucket == "storage"
     assert settings.s3_region == "us-east-1"
     assert settings.rabbitmq_exchange == "doc_events"
     assert settings.rabbitmq_dlx == "doc_events_dlq"

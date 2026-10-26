@@ -159,7 +159,12 @@ class Pipeline:
     def _claim(self, message: ProcessMessage) -> DeliveryResult | None:
         for _ in range(3):
             file = self.store.get_by_file_id(message.file_id)
-            if file is None or file.get("user_id") != message.user_id or file.get("s3_key") != message.s3_key:
+            if (
+                file is None
+                or file.get("user_id") != message.user_id
+                or file.get("s3_key") != message.s3_key
+                or (file.get("content_type") or "application/pdf") != message.content_type
+            ):
                 get_logger().error("message does not match file document")
                 return DeliveryResult.nack()
             status = file.get("status")
