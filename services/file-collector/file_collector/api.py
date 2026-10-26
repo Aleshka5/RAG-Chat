@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse, Response
 
 from file_collector.errors import ApiError
 from file_collector.service import (
+    DOCUMENT_CONTENT_TYPES,
     IMAGE_CONTENT_TYPES,
-    PDF_CONTENT_TYPE,
     accept_manifest,
     delete_pdf,
     get_pdf,
@@ -144,8 +144,7 @@ async def create_document(request: Request, user_id: str = Depends(require_user)
         files=request.app.state.files,
         objects=request.app.state.objects,
         publisher=request.app.state.publisher,
-        allowed_types=frozenset({PDF_CONTENT_TYPE}),
-        pdf_extension=True,
+        allowed_types=DOCUMENT_CONTENT_TYPES,
     )
     return JSONResponse(status_code=202, content=card)
 
@@ -172,7 +171,6 @@ async def create_image(request: Request, user_id: str = Depends(require_user)) -
         objects=request.app.state.objects,
         publisher=request.app.state.publisher,
         allowed_types=IMAGE_CONTENT_TYPES,
-        pdf_extension=False,
     )
     return JSONResponse(status_code=202, content=card)
 

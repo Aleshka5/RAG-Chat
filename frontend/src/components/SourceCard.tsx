@@ -7,7 +7,7 @@ export function SourceCard({ source }: { source: Source }) {
   return (
     <article className="source-card">
       <p className="choice-title truncate">{source.file_name}</p>
-      <p className="meta">Page {source.page_number}</p>
+      <p className="meta">{source.unit_label ? source.unit_label : `Page ${source.page_number}`}</p>
       {source.snippet ? <p className="choice-teaser">{source.snippet}</p> : null}
       {unavailable ? (
         <p className="hint-danger">Preview unavailable</p>

@@ -17,6 +17,7 @@ def test_spec_window_example() -> None:
     assert chunks[2].page_number == 1
     assert chunks[2].page_end == 1
     assert all(chunk.source == "text" for chunk in chunks)
+    assert all(chunk.unit_label is None for chunk in chunks)
 
 
 def test_page_of_first_and_last_token_and_ocr_source() -> None:
@@ -48,6 +49,22 @@ def test_empty_decoded_window_does_not_consume_chunk_index() -> None:
     )
     assert [chunk.index for chunk in chunks] == [0]
     assert chunks[0].text.strip() == "A"
+
+
+def test_chunk_label_comes_from_the_first_token_unit() -> None:
+    pages = [
+        PageText(1, "", "empty", "пропуск"),
+        PageText(2, "a" * 10, "text", "Раздел 1"),
+        PageText(3, "b" * 10, "text", "Лист"),
+    ]
+    chunks = build_chunks(pages, CharTokenizer(), size=12, overlap=0)
+    assert chunks[0].unit_label == "Раздел 1"
+    assert chunks[0].page_number == 2
+    assert chunks[0].page_end == 3
+    assert chunks[0].text == ("a" * 10) + ("b" * 2)
+    assert chunks[1].unit_label == "Лист"
+    assert chunks[1].page_number == 3
+    assert chunks[1].source == "text"
 
 
 def test_overlap_not_smaller_than_window_refuses_to_start() -> None:

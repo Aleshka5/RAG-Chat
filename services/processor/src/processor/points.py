@@ -21,8 +21,9 @@ def point_payload(
     source: str,
     chunk_index: int,
     created_at: str,
+    unit_label: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "text": text,
         "document_id": file_id,
         "user_id": user_id,
@@ -33,6 +34,9 @@ def point_payload(
         "chunk_index": chunk_index,
         "created_at": created_at,
     }
+    if isinstance(unit_label, str) and unit_label != "":
+        payload["unit_label"] = unit_label
+    return payload
 
 
 def image_point_payload(

@@ -25,6 +25,9 @@ from file_collector.names import content_disposition, safe_name, validated_file_
 from file_collector.schema import CONTENT_STATUSES, file_card, new_file_document
 
 PDF_CONTENT_TYPE = "application/pdf"
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOCUMENT_CONTENT_TYPES = frozenset({PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE, XLSX_CONTENT_TYPE})
 IMAGE_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FILES_PREFIX = re.compile(
@@ -206,7 +209,6 @@ async def accept_manifest(
     objects,
     publisher,
     allowed_types: frozenset[str],
-    pdf_extension: bool,
 ) -> dict:
     """Register an object that is already in the bucket. Bytes are not copied."""
     payload = await _read_manifest(request)
@@ -234,6 +236,7 @@ async def accept_manifest(
     file_name = manifest["file_name"]
     digest = manifest["content_sha256"]
     content_type = manifest["content_type"]
+    pdf_extension = content_type == PDF_CONTENT_TYPE
     logger.debug(
         "manifest sha256 %s length %s",
         digest,
@@ -453,12 +456,7 @@ def _validated_manifest(payload: dict, allowed_types: frozenset[str]) -> dict:
     if fields:
         raise ApiError(400, "validation_error", "Invalid request", {"fields": fields})
     if content_type not in allowed_types:
-        message = (
-            "Only PDF is accepted"
-            if allowed_types == frozenset({PDF_CONTENT_TYPE})
-            else "Only JPEG, PNG, WEBP, and GIF are accepted"
-        )
-        raise ApiError(415, "unsupported_media_type", message)
+        raise ApiError(415, "unsupported_media_type", _unsupported_media_message(allowed_types))
     return {
         "s3_key": s3_key,
         "file_name": file_name,
@@ -466,6 +464,14 @@ def _validated_manifest(payload: dict, allowed_types: frozenset[str]) -> dict:
         "file_size": file_size,
         "content_type": content_type,
     }
+
+
+def _unsupported_media_message(allowed_types: frozenset[str]) -> str:
+    if allowed_types == IMAGE_CONTENT_TYPES:
+        return "Only JPEG, PNG, WEBP, and GIF are accepted"
+    if allowed_types == DOCUMENT_CONTENT_TYPES:
+        return "Only PDF, DOCX, and XLSX are accepted"
+    return "Only PDF is accepted"
 
 
 def _valid_s3_key(value: object) -> bool:

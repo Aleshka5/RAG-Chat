@@ -14,6 +14,7 @@ class StoredPoint:
     page_number: int
     chunk_index: int
     score: float
+    unit_label: str | None = None
 
 
 @dataclass
@@ -160,6 +161,7 @@ class MemoryQdrant:
                 page_number=point.page_number,
                 chunk_index=point.chunk_index,
                 score=point.score,
+                unit_label=point.unit_label,
             )
             for point in matched[:limit]
         ]

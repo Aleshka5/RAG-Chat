@@ -19,8 +19,15 @@ from processor.logging import (
     request_id_var,
     user_id_var,
 )
-from processor.messages import IMAGE_CONTENT_TYPES, ProcessMessage, parse_process_message
+from processor.messages import (
+    DOCX_CONTENT_TYPE,
+    IMAGE_CONTENT_TYPES,
+    PDF_CONTENT_TYPE,
+    ProcessMessage,
+    parse_process_message,
+)
 from processor.mongo_store import CLAIM_STATUSES, SKIP_STATUSES
+from processor.office import CorruptDocument, OfficeUnit, extract_docx, extract_xlsx
 from processor.pdfdoc import CorruptPdf, OpenedPdf
 from processor.points import image_point_payload, point_id, point_payload
 from processor.timeutil import format_z, utcnow
@@ -169,7 +176,10 @@ class Pipeline:
         if message.content_type in IMAGE_CONTENT_TYPES:
             self._process_image(message, request_id)
             return
-        self._process_pdf(message, request_id)
+        if message.content_type == PDF_CONTENT_TYPE:
+            self._process_pdf(message, request_id)
+            return
+        self._process_office(message, request_id)
 
     def _process_pdf(self, message: ProcessMessage, request_id: str) -> None:
         data = self.blobs.get_bytes(message.s3_key)
@@ -185,6 +195,29 @@ class Pipeline:
         finally:
             pdf.close()
         pages = self._ordered_pages(message.file_id, page_count)
+        chunks = build_chunks(
+            pages,
+            self._tokenizer,
+            size=self.settings.chunk_tokens,
+            overlap=self.settings.chunk_overlap_tokens,
+        )
+        self._index(message, page_count, chunks, request_id)
+
+    def _process_office(self, message: ProcessMessage, request_id: str) -> None:
+        data = self.blobs.get_bytes(message.s3_key)
+        try:
+            if message.content_type == DOCX_CONTENT_TYPE:
+                units = extract_docx(data)
+            else:
+                units = extract_xlsx(data)
+        except CorruptDocument as exc:
+            raise PermanentFailure("corrupt_document") from exc
+        page_count = self._store_office_units(message, units)
+        pages = self._ordered_pages(
+            message.file_id,
+            page_count,
+            labels=[unit.label for unit in units],
+        )
         chunks = build_chunks(
             pages,
             self._tokenizer,
@@ -265,7 +298,40 @@ class Pipeline:
             )
         return page_count
 
-    def _ordered_pages(self, file_id: str, page_count: int) -> list[PageText]:
+    def _store_office_units(self, message: ProcessMessage, units: list[OfficeUnit]) -> int:
+        page_count = len(units)
+        if not self.store.note_opened(message.file_id, page_count, self._now()):
+            raise _LeftProcessing()
+        for number, unit in enumerate(units, start=1):
+            if self.store.page_exists(message.file_id, number):
+                if not self.store.advance_page(message.file_id, number, self._now()):
+                    raise _LeftProcessing()
+                continue
+            self.store.insert_page(
+                {
+                    "file_id": message.file_id,
+                    "user_id": message.user_id,
+                    "page_number": number,
+                    "text": unit.text,
+                    "origin": "text",
+                    "updated_at": self._now(),
+                }
+            )
+            if not self.store.advance_page(message.file_id, number, self._now()):
+                raise _LeftProcessing()
+            self.store.touch(message.file_id, self._now())
+            get_logger().debug(
+                "page stored",
+                extra={"page_number": number, "origin": "text", "text_len": len(unit.text)},
+            )
+        return page_count
+
+    def _ordered_pages(
+        self,
+        file_id: str,
+        page_count: int,
+        labels: list[str] | None = None,
+    ) -> list[PageText]:
         stored = self.store.list_pages(file_id)
         by_number = {int(page["page_number"]): page for page in stored}
         missing = [number for number in range(1, page_count + 1) if number not in by_number]
@@ -279,6 +345,7 @@ class Pipeline:
                 page_number=number,
                 text=by_number[number].get("text") or "",
                 origin=by_number[number]["origin"],
+                unit_label=None if labels is None else labels[number - 1],
             )
             for number in range(1, page_count + 1)
         ]
@@ -339,6 +406,7 @@ class Pipeline:
                         source=chunk.source,
                         chunk_index=chunk.index,
                         created_at=created_at,
+                        unit_label=chunk.unit_label,
                     ),
                 }
                 for chunk, vector in zip(batch, vectors, strict=True)

@@ -201,6 +201,33 @@ def test_non_pdf_is_415_even_with_pdf_content_type(stack) -> None:
     assert publisher.messages == []
 
 
+def test_multipart_upload_rejects_docx_and_xlsx(stack) -> None:
+    client, files, objects, publisher = stack
+    docx_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    xlsx_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    docx = upload(
+        client,
+        USER_A,
+        content=b"PK\x03\x04docx",
+        name="Отчёт.docx",
+        content_type=docx_type,
+    )
+    xlsx = upload(
+        client,
+        USER_A,
+        content=b"PK\x03\x04xlsx",
+        name="Книга.xlsx",
+        content_type=xlsx_type,
+    )
+    assert docx.status_code == 415
+    assert xlsx.status_code == 415
+    assert docx.json()["error"]["code"] == "unsupported_media_type"
+    assert xlsx.json()["error"]["code"] == "unsupported_media_type"
+    assert files.docs == {}
+    assert objects.puts == []
+    assert publisher.messages == []
+
+
 def test_duplicate_returns_409_with_file_id_and_reupload_after_deleted(stack) -> None:
     client, files, objects, _publisher = stack
     first = upload(client, USER_A, name="first.pdf")
@@ -617,16 +644,75 @@ def test_document_manifest_accepts_pdf_and_keeps_caller_key(stack) -> None:
 
 def test_document_manifest_rejects_text_and_image_types(stack) -> None:
     client, files, objects, publisher = stack
-    for content_type in (
-        "text/plain",
-        "image/jpeg",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ):
+    for content_type in ("text/plain", "image/jpeg"):
         response = post_manifest(
             client,
             "/api/files/documents",
             USER_A,
             _manifest(content_type=content_type, content_sha256="e" * 64),
+        )
+        assert response.status_code == 415
+        assert response.json()["error"]["code"] == "unsupported_media_type"
+    assert files.docs == {}
+    assert objects.puts == []
+    assert objects.heads == 0
+    assert publisher.messages == []
+
+
+def test_document_manifest_accepts_docx_and_xlsx(stack) -> None:
+    client, files, objects, publisher = stack
+    docx_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    xlsx_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    samples = (
+        (docx_type, "incoming/office/Отчёт.docx", "Отчёт.docx", "b" * 64),
+        (xlsx_type, "incoming/office/Книга.xlsx", "Книга.xlsx", "c" * 64),
+    )
+    for content_type, key, file_name, digest in samples:
+        payload = b"ooxml"
+        objects.objects[key] = payload
+        response = post_manifest(
+            client,
+            "/api/files/documents",
+            USER_A,
+            _manifest(
+                s3_key=key,
+                file_name=file_name,
+                file_size=len(payload),
+                content_sha256=digest,
+                content_type=content_type,
+            ),
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body["content_type"] == content_type
+        assert body["file_name"] == file_name
+        stored = files.docs[body["file_id"]]
+        assert stored["content_type"] == content_type
+        assert stored["s3_key"] == key
+        assert stored["safe_name"] == file_name
+        assert stored["content_sha256"] == digest
+        routing, message, _props = publisher.messages[-1]
+        assert routing == "doc.process"
+        assert message["content_type"] == content_type
+        assert message["s3_key"] == key
+    assert objects.puts == []
+    assert objects.gets == 0
+
+
+def test_document_manifest_rejects_legacy_office_and_csv(stack) -> None:
+    client, files, objects, publisher = stack
+    rejected = (
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/csv",
+    )
+    for content_type in rejected:
+        response = post_manifest(
+            client,
+            "/api/files/documents",
+            USER_A,
+            _manifest(content_type=content_type, content_sha256="f" * 64),
         )
         assert response.status_code == 415
         assert response.json()["error"]["code"] == "unsupported_media_type"

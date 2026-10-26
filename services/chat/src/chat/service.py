@@ -31,9 +31,10 @@ class Source:
     chunk_index: int
     text: str
     score: float
+    unit_label: str | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        body: dict[str, object] = {
             "file_id": self.file_id,
             "file_name": self.file_name,
             "page_number": self.page_number,
@@ -41,6 +42,9 @@ class Source:
             "snippet": snippet(self.text),
             "score": self.score,
         }
+        if isinstance(self.unit_label, str) and self.unit_label:
+            body["unit_label"] = self.unit_label
+        return body
 
 
 def _content_path(file_id: str) -> str:
@@ -422,6 +426,7 @@ def select_sources(
                 chunk_index=hit.chunk_index,
                 text=hit.text,
                 score=hit.score,
+                unit_label=hit.unit_label,
             )
         )
     chosen.sort(key=lambda source: source.score, reverse=True)

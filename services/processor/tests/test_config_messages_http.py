@@ -183,7 +183,14 @@ def test_image_content_types_parse_and_other_types_are_rejected() -> None:
     parsed = parse_process_message(json.dumps(built).encode())
     assert parsed.content_type == "image/png"
     body = json.loads(message_for(file_document()))
-    for content_type in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+    for content_type in (
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ):
         body["content_type"] = content_type
         assert parse_process_message(json.dumps(body).encode()).content_type == content_type
     body["content_type"] = "text/plain"

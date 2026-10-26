@@ -17,6 +17,7 @@ class PageText:
     page_number: int
     text: str
     origin: str
+    unit_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class Chunk:
     page_number: int
     page_end: int
     source: str
+    unit_label: str | None = None
 
 
 def build_chunks(
@@ -41,16 +43,17 @@ def build_chunks(
     prefix, and special tokens are applied when that prefixed string is encoded.
     Page token lists are concatenated in page order. ``origin=empty`` pages
     contribute nothing. A window whose decoded text is empty after ``strip``
-    does not become a chunk, and ``chunk_index`` stays dense.
+    does not become a chunk, and ``chunk_index`` stays dense. ``unit_label``
+    is taken from the window's first token.
     """
     if overlap >= size:
         raise ConfigError("CHUNK_OVERLAP_TOKENS")
-    tokens: list[tuple[int, int, str]] = []
+    tokens: list[tuple[int, int, str, str | None]] = []
     for page in pages:
         if page.origin == "empty" or page.text.strip() == "":
             continue
         for token_id in tokenizer.encode(page.text):
-            tokens.append((token_id, page.page_number, page.origin))
+            tokens.append((token_id, page.page_number, page.origin, page.unit_label))
     if not tokens:
         return []
 
@@ -70,6 +73,7 @@ def build_chunks(
                     page_number=window[0][1],
                     page_end=window[-1][1],
                     source=source,
+                    unit_label=window[0][3],
                 )
             )
         if end >= total:

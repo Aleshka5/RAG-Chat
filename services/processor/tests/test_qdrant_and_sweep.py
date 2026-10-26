@@ -65,10 +65,30 @@ def test_collection_is_created_with_tenant_index() -> None:
         assert schema["user_id"].is_tenant is True
         assert schema["user_id"].type == models.KeywordIndexType.KEYWORD
         assert schema["document_id"].type == models.KeywordIndexType.KEYWORD
+    assert by_collection["documents"]["unit_label"].type == models.KeywordIndexType.KEYWORD
+    assert by_collection["documents"]["unit_label"].type == by_collection["documents"]["document_id"].type
+    assert "unit_label" not in by_collection["images"]
     raw.created.clear()
     raw.indexes.clear()
     store.ensure_collection()
     assert raw.created == []
+    assert raw.indexes == []
+
+
+def test_unit_label_index_is_added_only_to_documents_when_missing() -> None:
+    raw = RawQdrant(exists=True, size=768)
+    raw.payload_schema = {
+        "documents": {"user_id": True, "document_id": True},
+        "images": {"user_id": True, "document_id": True},
+    }
+    store = QdrantStore(make_settings(embedding_dim=768), client=raw, sleeper=lambda _s: None)
+    store.ensure_collection()
+    assert [(item["collection_name"], item["field_name"]) for item in raw.indexes] == [
+        ("documents", "unit_label"),
+    ]
+    assert raw.indexes[0]["field_schema"].type == models.KeywordIndexType.KEYWORD
+    raw.indexes.clear()
+    store.ensure_collection()
     assert raw.indexes == []
 
 

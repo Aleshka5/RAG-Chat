@@ -91,6 +91,48 @@ describe("SSE chat stream", () => {
     expect(events).toEqual([{ type: "delta", content: "А" }]);
   });
 
+  it("copies a non-empty unit label and omits an empty one", () => {
+    const office = {
+      file_id: "6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f",
+      file_name: "Отчёт.docx",
+      page_number: 1,
+      chunk_index: 0,
+      snippet: "текст",
+      score: 0.9,
+      unit_label: "Введение",
+    };
+    const pdf = {
+      file_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      file_name: "Отчёт.pdf",
+      page_number: 4,
+      chunk_index: 1,
+      snippet: "страница",
+      score: 0.4,
+      unit_label: "",
+    };
+    const raw =
+      [
+        "event: meta",
+        `data: ${JSON.stringify({
+          chat_id: "b7e1a2c4-1111-4222-8333-444455556666",
+          user_message_id: "11111111-1111-4111-8111-111111111111",
+          assistant_message_id: "22222222-2222-4222-8222-222222222222",
+          sources: [office, pdf],
+        })}`,
+        "",
+        "",
+      ].join("\n");
+    const { events } = parseChatSseChunk(raw);
+    expect(events[0]).toMatchObject({
+      type: "meta",
+      sources: [
+        { file_name: "Отчёт.docx", page_number: 1, unit_label: "Введение" },
+        { file_name: "Отчёт.pdf", page_number: 4 },
+      ],
+    });
+    expect(events[0]?.type === "meta" && events[0].sources[1].unit_label).toBeUndefined();
+  });
+
   it("reads image hits beside an empty source list", () => {
     const image = {
       file_id: "6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f",

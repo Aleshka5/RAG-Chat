@@ -20,6 +20,7 @@ class Hit:
     page_number: int
     chunk_index: int
     score: float
+    unit_label: str | None = None
 
 
 @dataclass(slots=True)
@@ -160,6 +161,7 @@ def _hit_from_point(point: object) -> Hit | None:
         page_number=page_number,
         chunk_index=chunk_index,
         score=score,
+        unit_label=_required_text(payload, "unit_label"),
     )
 
 

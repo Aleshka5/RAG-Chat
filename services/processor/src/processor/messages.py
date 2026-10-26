@@ -10,6 +10,8 @@ from processor.errors import InvalidMessage
 
 MESSAGE_TYPE_PROCESS = "doc.process"
 PDF_CONTENT_TYPE = "application/pdf"
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 IMAGE_CONTENT_TYPES = frozenset(
     {
         "image/jpeg",
@@ -18,7 +20,8 @@ IMAGE_CONTENT_TYPES = frozenset(
         "image/gif",
     }
 )
-ACCEPTED_CONTENT_TYPES = frozenset({PDF_CONTENT_TYPE, *IMAGE_CONTENT_TYPES})
+OFFICE_CONTENT_TYPES = frozenset({DOCX_CONTENT_TYPE, XLSX_CONTENT_TYPE})
+ACCEPTED_CONTENT_TYPES = frozenset({PDF_CONTENT_TYPE, *IMAGE_CONTENT_TYPES, *OFFICE_CONTENT_TYPES})
 
 
 @dataclass(frozen=True)

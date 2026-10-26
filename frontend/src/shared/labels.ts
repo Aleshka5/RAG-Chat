@@ -2,6 +2,7 @@ import type { FileProgress, FileStatus } from "../types";
 
 export const FILE_ERROR_LABELS: Record<string, string> = {
   corrupt_pdf: "The file is damaged or is not a PDF",
+  corrupt_document: "The file is damaged or is not a Word or Excel document",
   storage_read_failed: "Could not read the file from storage",
   embedding_failed: "Could not build the vectors",
   index_write_failed: "Could not write the index",

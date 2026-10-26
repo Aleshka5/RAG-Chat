@@ -67,6 +67,7 @@ export type Source = {
   chunk_index: number;
   snippet: string;
   score: number;
+  unit_label?: string;
 };
 
 export type ImageHit = {

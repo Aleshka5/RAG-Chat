@@ -70,6 +70,7 @@ def test_text_layer_pdf_reaches_ready_with_page_count() -> None:
         assert payload["document_id"] == document["file_id"]
         assert payload["file_name"] == "Отчёт.pdf"
         assert payload["source"] == "text"
+        assert "unit_label" not in payload
         assert point["id"] == point_id(document["file_id"], payload["chunk_index"])
         assert len(point["vector"]) == settings.embedding_dim
     assert store.pages_done_history == sorted(store.pages_done_history)

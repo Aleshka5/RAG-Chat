@@ -70,7 +70,7 @@ function readSources(value: unknown): Source[] {
     if (!source) {
       throw new Error("Invalid source");
     }
-    return {
+    const parsed: Source = {
       file_id: requiredString(source, "file_id"),
       file_name: requiredString(source, "file_name"),
       page_number: requiredNumber(source, "page_number"),
@@ -78,6 +78,10 @@ function readSources(value: unknown): Source[] {
       snippet: typeof source.snippet === "string" ? source.snippet : "",
       score: typeof source.score === "number" ? source.score : 0,
     };
+    if (typeof source.unit_label === "string" && source.unit_label.length > 0) {
+      parsed.unit_label = source.unit_label;
+    }
+    return parsed;
   });
 }
 

@@ -99,6 +99,12 @@ class QdrantStore:
                 field_name="document_id",
                 field_schema=models.KeywordIndexParams(type=models.KeywordIndexType.KEYWORD),
             )
+        if name == self._documents and "unit_label" not in fields:
+            self._client.create_payload_index(
+                collection_name=name,
+                field_name="unit_label",
+                field_schema=models.KeywordIndexParams(type=models.KeywordIndexType.KEYWORD),
+            )
 
     def upsert_points(self, points: list[dict[str, Any]]) -> None:
         self._upsert(self._documents, points)

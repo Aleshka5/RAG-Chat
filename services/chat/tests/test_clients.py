@@ -150,6 +150,41 @@ async def test_qdrant_search_filters_by_user():
         await QdrantVectorIndex(settings, client=Broken()).search(USER_A, [0.1], 1)
 
 
+@pytest.mark.asyncio
+async def test_document_payload_keeps_unit_label_only_as_text():
+    settings = make_settings()
+    base = {
+        "text": "абзац",
+        "page_number": 2,
+        "chunk_index": 0,
+        "user_id": USER_A,
+    }
+
+    class Stub:
+        async def query_points(self, **kwargs):
+            return _QueryResult(
+                [
+                    _Point({**base, "document_id": "docx", "unit_label": "Лист1"}, 0.9),
+                    _Point({**base, "document_id": "pdf"}, 0.8),
+                    _Point({**base, "document_id": "blank", "unit_label": ""}, 0.7),
+                    _Point({**base, "document_id": "number", "unit_label": 3}, 0.6),
+                ]
+            )
+
+    hits = await QdrantVectorIndex(settings, client=Stub()).search(USER_A, [0.1], 5)
+    assert [hit.document_id for hit in hits] == ["docx", "pdf", "blank", "number"]
+    assert hits[0].unit_label == "Лист1"
+    labeled = hits[0]
+    assert labeled.page_number == 2
+    assert labeled.chunk_index == 0
+    assert labeled.text == "абзац"
+    assert labeled.score == 0.9
+    assert hits[1].unit_label is None
+    assert hits[1].page_number == 2
+    assert hits[2].unit_label is None
+    assert hits[3].unit_label is None
+
+
 class _Point:
     def __init__(self, payload: dict, score: float | None) -> None:
         self.payload = payload

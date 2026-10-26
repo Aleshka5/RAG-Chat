@@ -270,6 +270,51 @@ async def test_question_streams_meta_then_delta_then_done_with_page(api):
     assert detail["title"] == "Каков срок годности?"
 
 
+async def test_unit_label_round_trips_and_is_omitted_without_the_field(api):
+    client, world = api
+    world.add_file(user_id=USER_A, file_id=FILE_A, file_name="Отчёт.docx")
+    world.add_file(user_id=USER_A, file_id=FILE_B, file_name="Отчёт.pdf")
+    world.add_point(
+        user_id=USER_A,
+        document_id=FILE_A,
+        text="текст раздела",
+        page_number=1,
+        chunk_index=0,
+        score=0.9,
+        unit_label="Введение",
+    )
+    world.add_point(
+        user_id=USER_A,
+        document_id=FILE_B,
+        text="текст страницы",
+        page_number=4,
+        chunk_index=1,
+        score=0.4,
+    )
+    created = await _create_chat(client)
+    response = await _ask(client, created["chat_id"], "Что в документах?")
+    assert response.status_code == 200
+    events = parse_sse(response.content)
+    sources = events[0][1]["sources"]
+    assert sources[0]["file_id"] == FILE_A
+    assert sources[0]["unit_label"] == "Введение"
+    assert sources[0]["page_number"] == 1
+    pdf = sources[1]
+    assert pdf["file_id"] == FILE_B
+    assert pdf["page_number"] == 4
+    assert pdf["file_name"] == "Отчёт.pdf"
+    assert "unit_label" not in pdf
+    prompt = world.transport.llm_body()["messages"][0]["content"]
+    assert "Введение" not in prompt
+    assert "стр. 1" in prompt
+
+    detail = (await client.get(f"/api/chats/{created['chat_id']}", headers=auth(USER_A))).json()
+    stored = detail["messages"][1]["sources"]
+    assert stored == sources
+    assert stored[0]["unit_label"] == "Введение"
+    assert "unit_label" not in stored[1]
+
+
 async def test_search_does_not_return_another_users_chunks(api):
     client, world = api
     world.add_file(user_id=USER_A, file_id=FILE_A, file_name="А.pdf")

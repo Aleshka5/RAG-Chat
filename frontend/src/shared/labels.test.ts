@@ -8,6 +8,7 @@ import {
 
 const CODES = [
   "corrupt_pdf",
+  "corrupt_document",
   "storage_read_failed",
   "embedding_failed",
   "index_write_failed",
@@ -23,6 +24,7 @@ describe("file error labels", () => {
   it("uses the human-readable label for every processing code", () => {
     expect(FILE_ERROR_LABELS).toEqual({
       corrupt_pdf: "The file is damaged or is not a PDF",
+      corrupt_document: "The file is damaged or is not a Word or Excel document",
       storage_read_failed: "Could not read the file from storage",
       embedding_failed: "Could not build the vectors",
       index_write_failed: "Could not write the index",

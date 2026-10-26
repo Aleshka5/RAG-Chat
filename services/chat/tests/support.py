@@ -94,6 +94,7 @@ class World:
         page_number: int,
         chunk_index: int = 0,
         score: float = 0.9,
+        unit_label: str | None = None,
     ) -> None:
         from tests.memory import StoredPoint
 
@@ -105,6 +106,7 @@ class World:
                 page_number=page_number,
                 chunk_index=chunk_index,
                 score=score,
+                unit_label=unit_label,
             )
         )
 

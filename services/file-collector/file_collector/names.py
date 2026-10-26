@@ -25,7 +25,8 @@ def validated_file_name(raw: str | None) -> str:
 def safe_name(original: str, *, pdf_extension: bool = True) -> str:
     """Object-key segment. Unicode letters and digits stay.
 
-    PDF intake forces a ``.pdf`` extension. Image manifests keep the cleaned name.
+    PDF intake forces a ``.pdf`` extension. Manifests that pass
+    ``pdf_extension=False`` keep the cleaned extension.
     """
     base = basename(original)
     cleaned: list[str] = []

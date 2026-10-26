@@ -2,7 +2,7 @@ import uuid
 
 from qdrant_client import models
 
-from processor.points import POINT_NAMESPACE, point_id
+from processor.points import POINT_NAMESPACE, point_id, point_payload
 from processor.qdrant_store import file_points_filter, tail_points_filter, vector_size
 
 
@@ -13,6 +13,61 @@ def test_point_id_is_uuid5_of_file_and_chunk() -> None:
     assert point_id(file_id, 2) == expected
     assert point_id(file_id, 2) == point_id(file_id, 2)
     assert point_id(file_id, 2) != point_id(file_id, 3)
+
+
+def test_unit_label_is_included_only_when_it_is_a_non_empty_string() -> None:
+    payload = point_payload(
+        text="текст",
+        file_id="file-1",
+        user_id="user-1",
+        page_number=1,
+        page_end=2,
+        file_name="Отчёт.pdf",
+        source="text",
+        chunk_index=0,
+        created_at="2026-10-18T20:00:00Z",
+    )
+    assert "unit_label" not in payload
+    assert "unit_label" not in point_payload(
+        text="текст",
+        file_id="file-1",
+        user_id="user-1",
+        page_number=1,
+        page_end=2,
+        file_name="Отчёт.pdf",
+        source="text",
+        chunk_index=0,
+        created_at="2026-10-18T20:00:00Z",
+        unit_label=None,
+    )
+    assert "unit_label" not in point_payload(
+        text="текст",
+        file_id="file-1",
+        user_id="user-1",
+        page_number=1,
+        page_end=2,
+        file_name="Отчёт.pdf",
+        source="text",
+        chunk_index=0,
+        created_at="2026-10-18T20:00:00Z",
+        unit_label="",
+    )
+    labeled = point_payload(
+        text="текст",
+        file_id="file-1",
+        user_id="user-1",
+        page_number=1,
+        page_end=2,
+        file_name="Отчёт.docx",
+        source="text",
+        chunk_index=0,
+        created_at="2026-10-18T20:00:00Z",
+        unit_label="Лист 1",
+    )
+    assert labeled["unit_label"] == "Лист 1"
+    assert labeled["source"] == "text"
+    assert labeled["document_id"] == "file-1"
+    assert set(labeled) == set(payload) | {"unit_label"}
 
 
 def test_delete_filter_is_tenant_plus_document() -> None:
