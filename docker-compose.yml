@@ -56,7 +56,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: storage
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       RABBITMQ_URL: amqp://rabbit:5672/
 
   processor:
@@ -71,7 +71,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: storage
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       OCR_URL: http://ocr:8090
       OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
@@ -91,7 +91,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: storage
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       RABBITMQ_URL: amqp://rabbit:5672/
       DELETION_CONCURRENCY: "1"
@@ -103,7 +103,7 @@ services:
     depends_on: [mongo, qdrant]
     environment:
       CHAT_PORT: "8082"
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_URL: http://embedding:8091
       LLM_BASE_URL: ${LLM_BASE_URL}
@@ -117,7 +117,12 @@ services:
 
   mongo:
     image: mongo:7
-    networks: [rag_internal]
+    # Common infrastructure also runs a container named `mongo` on
+    # common_network, and three RAG processes join that network to reach MinIO.
+    # Without a distinct alias those processes resolve the wrong database.
+    networks:
+      rag_internal:
+        aliases: [rag-mongo]
     restart: unless-stopped
     volumes: ["mongo-data:/data/db"]
 

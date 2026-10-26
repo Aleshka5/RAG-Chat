@@ -1115,7 +1115,7 @@ def test_image_multipart_upload_stores_bytes_and_publishes_content_type(stack) -
 
 
 def test_image_multipart_detects_each_type_from_bytes(stack) -> None:
-    client, _files, _objects, publisher = stack
+    client, _files, objects, publisher = stack
     cases = (
         (PNG, "a.png", "image/png"),
         (JPEG, "b.jpg", "image/jpeg"),
@@ -1128,6 +1128,8 @@ def test_image_multipart_detects_each_type_from_bytes(stack) -> None:
         assert response.json()["content_type"] == expected
     published = [body["content_type"] for _key, body, _properties in publisher.messages]
     assert published == [expected for _content, _name, expected in cases]
+    stored = list(objects.content_types.values())
+    assert stored == [expected for _content, _name, expected in cases]
 
 
 def test_image_multipart_rejects_bytes_that_are_not_an_image(stack) -> None:

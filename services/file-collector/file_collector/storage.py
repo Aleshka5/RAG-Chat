@@ -65,7 +65,7 @@ class S3Objects:
 
         return await self._call(stat)
 
-    async def put(self, key: str, data: BinaryIO, length: int) -> None:
+    async def put(self, key: str, data: BinaryIO, length: int, content_type: str) -> None:
         client = self._client_or_raise()
         bucket = self._settings.s3_bucket
 
@@ -76,7 +76,7 @@ class S3Objects:
                 key,
                 data,
                 length=length,
-                content_type="application/pdf",
+                content_type=content_type,
             )
 
         await self._call(upload)

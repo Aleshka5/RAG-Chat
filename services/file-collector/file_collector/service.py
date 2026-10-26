@@ -151,7 +151,7 @@ async def _accept_upload(
             content_type=content_type,
         )
         try:
-            await objects.put(document["s3_key"], spool, size)
+            await objects.put(document["s3_key"], spool, size, content_type)
         except StorageError as exc:
             raise ApiError(503, "dependency_unavailable", "Dependency unavailable") from exc
         try:

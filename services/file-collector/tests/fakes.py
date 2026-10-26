@@ -220,6 +220,7 @@ class FakeObjects:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.puts: list[str] = []
+        self.content_types: dict[str, str] = {}
         self.deletes: list[str] = []
         self.gets = 0
         self.heads = 0
@@ -250,9 +251,10 @@ class FakeObjects:
             return self.head_sizes[key]
         return len(self.objects[key])
 
-    async def put(self, key: str, data, length: int) -> None:
+    async def put(self, key: str, data, length: int, content_type: str) -> None:
         payload = data.read()
         self.puts.append(key)
+        self.content_types[key] = content_type
         if self.fail_put:
             raise StorageError("s3")
         if len(payload) != length:

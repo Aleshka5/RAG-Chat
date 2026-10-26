@@ -35,11 +35,42 @@ GPU контейнеру отдаёт Switch-Service, тем же способо
 
 Инфраструктура локального стенда: MinIO и RabbitMQ 3 (с management-плагином) общие, живут в `common_network` (см. `Common/docker-compose-common.yml`), куда RAG-сервисы подключаются как к external-сети. В составе RAG-стека остаются MongoDB 7 и Qdrant ≥ 1.13. Сеть `models_network` вместе с `ocr`, `embedding`, LLM и генерацией изображений для этого стека тоже external: и сеть, и контейнеры создаёт Switch-Service.
 
+### Доступ RAG к общему бакету
+
+Бакет `storage` принадлежит WebStorage. RAG читает в нём `users/…`, `files/…` и пишет только `rag/…`. Ключ доступа RAG — отдельный пользователь MinIO с политикой `rag-storage`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+     "Resource": ["arn:aws:s3:::storage"]},
+    {"Effect": "Allow", "Action": ["s3:GetObject"],
+     "Resource": ["arn:aws:s3:::storage/users/*", "arn:aws:s3:::storage/files/*",
+                  "arn:aws:s3:::storage/rag/*"]},
+    {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+     "Resource": ["arn:aws:s3:::storage/rag/*"]}
+  ]
+}
+```
+
+```bash
+mc admin policy create local rag-storage rag-storage.json
+mc admin policy attach local rag-storage --user "$S3_ACCESS_KEY"
+mc mirror local/documents/files local/storage/files   # один раз: старые объекты до объединения бакетов
+```
+
+`ListBucket` нужен для `HEAD` бакета при старте. Без права на `storage` File Collector падает на `ensure_bucket` и не поднимается: `GET /api/files` отвечает `503`, страница файлов показывает ошибку загрузки списка.
+
+### Имя `mongo`
+
+В `common_network` уже живёт контейнер `mongo` (Common). Три процесса RAG входят в эту сеть ради MinIO и RabbitMQ, поэтому `mongo` для них резолвится неоднозначно. Свой MongoDB объявлен с алиасом `rag-mongo`, и `MONGODB_URI` всех четырёх процессов указывает на него: `mongodb://rag-mongo:27017/rag`. С именем `mongo` список файлов приходит пустым — процесс отвечает `200` из чужой пустой базы.
+
 ## Кто что создаёт при старте
 
 | Ресурс | Кто |
 |--------|-----|
-| Бакет MinIO | File Collector |
+| Бакет MinIO `storage` | Внешний: его создаёт WebStorage. File Collector при старте только проверяет доступ и бакет не создаёт |
 | Индексы `files` | File Collector, Processor, Deletion Worker |
 | Индекс `file_pages` | Processor, Deletion Worker |
 | Индексы `chats` и `messages` | Chat |
@@ -100,7 +131,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: storage
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       RABBITMQ_URL: amqp://rabbit:5672/
 
   processor:
@@ -115,7 +146,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: storage
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       OCR_URL: http://ocr:8090
       OCR_TIMEOUT: ${OCR_TIMEOUT:-120}
@@ -135,7 +166,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: storage
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       RABBITMQ_URL: amqp://rabbit:5672/
       DELETION_CONCURRENCY: "1"
@@ -147,7 +178,7 @@ services:
     depends_on: [mongo, qdrant]
     environment:
       CHAT_PORT: "8082"
-      MONGODB_URI: mongodb://mongo:27017/rag
+      MONGODB_URI: mongodb://rag-mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_URL: http://embedding:8091
       LLM_BASE_URL: ${LLM_BASE_URL}
@@ -161,7 +192,9 @@ services:
 
   mongo:
     image: mongo:7
-    networks: [rag_internal]
+    networks:
+      rag_internal:
+        aliases: [rag-mongo]
     restart: unless-stopped
     volumes: ["mongo-data:/data/db"]
 
