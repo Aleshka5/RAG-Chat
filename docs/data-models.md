@@ -43,11 +43,12 @@ stateDiagram-v2
 | `file_name` | string | Имя, как его показал пользователь, после отсечения пути. До 255 символов. |
 | `safe_name` | string | Имя внутри `s3_key`. |
 | `file_size` | int | Размер в байтах, больше 0. |
-| `content_type` | string | `application/pdf` либо `image/jpeg`, `image/png`, `image/webp`, `image/gif`. |
+| `content_type` | string | `application/pdf`, DOCX (`…wordprocessingml.document`), XLSX (`…spreadsheetml.sheet`) либо `image/jpeg`, `image/png`, `image/webp`, `image/gif`. |
 | `content_sha256` | string | SHA-256 байтов файла, 64 hex-символа в нижнем регистре. Для регистрации это строка манифеста: байты заново не хешируются. |
-| `s3_key` | string | У multipart-загрузки: `files/{user_id}/{file_id}/{safe_name}`. У регистрации: ключ из запроса, объект не переименовывается. |
+| `s3_key` | string | У новой multipart-загрузки: `rag/files/{user_id}/{file_id}/{safe_name}`. Старый `files/{user_id}/...` остаётся читаемым. У регистрации: ключ из запроса. |
 | `status` | string | Значение из закрытого набора. |
-| `page_count` | int или null | Число страниц после успешного открытия PDF. До этого `null`. У изображения всегда `null`. |
+| `object_owner` | string | `rag` или `storage`. В API-карточку не входит. Нет поля у старых документов — это `rag`. |
+| `page_count` | int или null | Число страниц PDF или число единиц DOCX/XLSX. До открытия `null`. У изображения всегда `null`. |
 | `error` | string или null | Код ошибки либо `null`. |
 | `delete_claimed_at` | datetime или null | Внутреннее поле. `null`, пока Deletion Worker не начал обработку. В API не отдаётся. |
 | `created_at` | datetime | Момент вставки. |
@@ -58,6 +59,7 @@ stateDiagram-v2
 | Код | Когда |
 |-----|--------|
 | `corrupt_pdf` | Файл не открывается как PDF. |
+| `corrupt_document` | DOCX или XLSX не открывается как OOXML. |
 | `storage_read_failed` | MinIO не отдал объект. |
 | `embedding_failed` | Embedding не ответил после повторов. |
 | `index_write_failed` | Qdrant не принял запись или предварительное удаление точек. |
@@ -125,6 +127,7 @@ db.files.createIndex(
 | `embedding_model` | string | Модель, под которую посчитаны чанки. |
 | `chunk_tokens` | int | Окно, под которое посчитаны чанки. |
 | `chunk_overlap` | int | Перекрытие той нарезки. |
+| `reindex` | bool | `true` только пока `PUT /api/files/{file_id}/object` держит файл в `processing`. Поиск тогда не прячет старые точки. Processor снимает поле при переходе в `ready`. |
 
 Несовпадение модели или параметров нарезки с текущим процессом сбрасывает только векторную часть: точки файла удаляются, `chunks_done=0`, `chunks_total=null`. Страницы в `file_pages` остаются.
 
@@ -192,6 +195,7 @@ db.chats.createIndex({ user_id: 1, updated_at: -1 })
 | `chunk_index` | int | С 0 внутри документа. |
 | `snippet` | string | Начало `text` чанка. Если текст длиннее 500 символов, в snippet попадают первые 497 символов и `...`. |
 | `score` | number | Оценка Qdrant, cosine similarity, больше — ближе. |
+| `unit_label` | string, поле отсутствует | Подпись единицы DOCX или XLSX. У PDF поля нет. |
 
 Элемент `images`:
 
@@ -263,7 +267,7 @@ point_id = uuid5(namespace, "{file_id}:{chunk_index}")
 
 `namespace` — UUID `a5b3c1d2-6e47-5f80-9c11-0d4e8f2a7b65`. Один и тот же чанк при повторе обработки получает тот же id и перезаписывается.
 
-Перед upsert Processor удаляет все точки с этим `document_id` и `user_id`, затем пишет актуальный набор. Так сократившийся документ не оставляёт хвост старых чанков.
+Id чанка стабилен. Upsert перезаписывает точку на месте. После записи нового набора Processor удаляет хвост с `chunk_index` больше или равным числу чанков. Все точки файла удаляются заранее, только если сменились модель или параметры нарезки, либо текста не осталось. Re-key точки заранее не удаляет.
 
 ### Payload
 
@@ -275,7 +279,8 @@ point_id = uuid5(namespace, "{file_id}:{chunk_index}")
 | `page_number` | integer | Страница первого токена, с 1. |
 | `page_end` | integer | Страница последнего токена, с 1. |
 | `file_name` | keyword | `file_name` на момент индексации. |
-| `source` | keyword | `text` или `ocr`. |
+| `source` | keyword | `text` или `ocr`. У DOCX и XLSX всегда `text`. |
+| `unit_label` | keyword, поле отсутствует | Только у DOCX и XLSX. Индекс keyword есть только в коллекции `documents`. |
 | `chunk_index` | integer | С 0, без пропусков в записанном наборе. |
 | `created_at` | string | ISO-8601, общее время индексации документа. |
 
@@ -345,10 +350,10 @@ client.delete(
 
 Полей `text`, `page_number`, `page_end`, `chunk_index` и `source` нет.
 
-Поиск изображений передаёт вектор текстового запроса (`input_type=query` у `POST /embed`) в `query_points` этой коллекции с фильтром `user_id`. Оценка — cosine similarity. В выдачу попадают только точки, чей файл в MongoDB принадлежит этому `user_id` и имеет статус `ready`.
+Поиск изображений передаёт вектор текстового запроса (`input_type=query` у `POST /embed`) в `query_points` этой коллекции с фильтром `user_id`. Оценка — cosine similarity. В выдачу попадают точки, чей файл в MongoDB принадлежит этому `user_id` и имеет статус `ready` или `processing` с `checkpoint.reindex=true`.
 
 ## Объект в MinIO
 
-Бакет — `S3_BUCKET` (по умолчанию `documents`). Один объект на файл, ключ `s3_key`. File Collector создаёт бакет при старте, если его нет.
+Бакет — `S3_BUCKET` (по умолчанию `storage`). Его создаёт стек storage. File Collector при старте проверяет, что бакет есть, и не вызывает `make_bucket`. Один объект на файл, ключ `s3_key`. Новые байты RAG лежат под `rag/files/`. Префиксы `_meta/`, `users/` и `shared/` RAG не пишет и не удаляет. Для `object_owner=storage` Deletion Worker не удаляет объект.
 
-Содержимое — исходные байты PDF или исходные байты изображения. Регистрация объект не копирует и не перекладывает. Производные изображения страниц PDF не сохраняются. У зарегистрированного файла ключ — тот, что передал вызывающий.
+Содержимое — исходные байты PDF, DOCX, XLSX или изображения. Регистрация объект не копирует и не перекладывает. Производные изображения страниц PDF не сохраняются. У зарегистрированного файла ключ — тот, что передал вызывающий.

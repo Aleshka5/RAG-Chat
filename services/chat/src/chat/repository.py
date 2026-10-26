@@ -42,6 +42,7 @@ class FileRecord:
     user_id: str
     file_name: str
     status: str
+    reindex: bool = False
 
 
 @dataclass(slots=True)
@@ -198,17 +199,26 @@ class MongoChatRepository:
     async def ready_files(self, user_id: str, file_ids: list[str]) -> dict[str, FileRecord]:
         if not file_ids:
             return {}
-        query = {"file_id": {"$in": file_ids}, "user_id": user_id, "status": "ready"}
+        query = {
+            "file_id": {"$in": file_ids},
+            "user_id": user_id,
+            "$or": [
+                {"status": "ready"},
+                {"status": "processing", "checkpoint.reindex": True},
+            ],
+        }
         async with self._guard():
             cursor = self._files.find(query)
             documents = await cursor.to_list(length=len(file_ids))
         found: dict[str, FileRecord] = {}
         for document in documents:
+            checkpoint = document.get("checkpoint") or {}
             record = FileRecord(
                 file_id=str(document["file_id"]),
                 user_id=str(document["user_id"]),
                 file_name=str(document["file_name"]),
                 status=str(document["status"]),
+                reindex=checkpoint.get("reindex") is True,
             )
             found[record.file_id] = record
         return found

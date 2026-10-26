@@ -401,6 +401,17 @@ class _LLMHandle:
             await aclose()
 
 
+def _searchable(record: FileRecord) -> bool:
+    """Ready files, and a file that re-key put back into processing.
+
+    First-time ``processing`` stays hidden. ``checkpoint.reindex`` is set only
+    by ``PUT /api/files/{file_id}/object`` and cleared when the file is ready.
+    """
+    if record.status == "ready":
+        return True
+    return record.status == "processing" and record.reindex
+
+
 def select_sources(
     hits: list[Hit],
     files: dict[str, FileRecord],
@@ -412,7 +423,7 @@ def select_sources(
         if hit.user_id and hit.user_id != user_id:
             continue
         record = files.get(hit.document_id)
-        if record is None or record.user_id != user_id or record.status != "ready":
+        if record is None or record.user_id != user_id or not _searchable(record):
             continue
         if min_score > 0 and hit.score < min_score:
             continue
@@ -444,7 +455,7 @@ def select_images(
         if hit.user_id and hit.user_id != user_id:
             continue
         record = files.get(hit.file_id)
-        if record is None or record.user_id != user_id or record.status != "ready":
+        if record is None or record.user_id != user_id or not _searchable(record):
             continue
         if min_score > 0 and hit.score < min_score:
             continue

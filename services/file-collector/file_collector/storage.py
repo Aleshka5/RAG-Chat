@@ -14,7 +14,6 @@ from file_collector.errors import ObjectNotFound, StorageError
 
 logger = logging.getLogger("file_collector")
 
-_ALREADY_EXISTS = {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}
 _MISSING_OBJECT = {"NoSuchKey", "NoSuchObject", "NotFound"}
 
 
@@ -40,16 +39,12 @@ class S3Objects:
         client = self._client_or_raise()
         bucket = self._settings.s3_bucket
 
-        def create() -> None:
-            if client.bucket_exists(bucket):
-                return
-            try:
-                client.make_bucket(bucket, location=self._settings.s3_region)
-            except S3Error as exc:
-                if exc.code not in _ALREADY_EXISTS:
-                    raise
+        def check() -> None:
+            # The storage stack owns this bucket. RAG reads it and does not create it.
+            if not client.bucket_exists(bucket):
+                raise StorageError("bucket")
 
-        await self._call(create)
+        await self._call(check)
 
     async def head(self, key: str) -> int | None:
         """Return the object size, or None when the store does not report one."""

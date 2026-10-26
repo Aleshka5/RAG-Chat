@@ -99,7 +99,7 @@ services:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_BUCKET: documents
+      S3_BUCKET: storage
       MONGODB_URI: mongodb://mongo:27017/rag
       RABBITMQ_URL: amqp://rabbit:5672/
 
@@ -114,6 +114,7 @@ services:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: storage
       MONGODB_URI: mongodb://mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       OCR_URL: http://ocr:8090
@@ -133,6 +134,7 @@ services:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: storage
       MONGODB_URI: mongodb://mongo:27017/rag
       QDRANT_URL: http://qdrant:6333
       RABBITMQ_URL: amqp://rabbit:5672/

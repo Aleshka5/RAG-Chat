@@ -25,6 +25,7 @@
 | Код | Подпись |
 |-----|---------|
 | `corrupt_pdf` | The file is damaged or is not a PDF |
+| `corrupt_document` | The file is damaged or is not a Word or Excel document |
 | `unsupported_image` | The image is damaged or is not a supported image |
 | `image_too_large` | The image is larger than the allowed size |
 | `storage_read_failed` | Could not read the file from storage |
@@ -37,7 +38,7 @@
 
 Пока в загруженной странице списка есть `uploaded`, `processing` или `deleting`, клиент повторяет `GET /api/files` каждые 5 секунд. Когда таких статусов нет, опрос останавливается. Удаление и загрузка не ждут окончания опроса: они сразу меняют локальный список и затем сверяются с ответом сервера.
 
-Загрузка — выбор файла или перетаскивание, один файл за запрос. PDF уходит `POST /api/files`, изображение — `POST /api/files/images`; оба маршрута принимают `multipart/form-data` с полем `file`. Изображением клиент считает файл с типом `image/*` или с расширением `jpg`, `jpeg`, `png`, `webp`, `gif`; какой это тип на самом деле, решает сервер по сигнатуре. Ответ `409 duplicate_file` показывает «This file already exists». `413` показывает «The file is larger than the allowed size», `415` — «This file type is not supported». Word и обычный текст не принимает ни один маршрут: сервер отвечает `415`.
+Загрузка — выбор файла или перетаскивание, один файл за запрос. PDF уходит `POST /api/files`, изображение — `POST /api/files/images`; оба маршрута принимают `multipart/form-data` с полем `file`. Изображением клиент считает файл с типом `image/*` или с расширением `jpg`, `jpeg`, `png`, `webp`, `gif`; какой это тип на самом деле, решает сервер по сигнатуре. Ответ `409 duplicate_file` показывает «This file already exists». `413` показывает «The file is larger than the allowed size», `415` — «This file type is not supported». Форма по-прежнему не шлёт DOCX и XLSX: multipart отвечает `415`. Эти типы приходят манифестом от storage.
 
 Строка с `content_type` `image/jpeg`, `image/png`, `image/webp` или `image/gif` не передаёт байты в PDF.js. Клиент забирает `GET /api/files/{file_id}/content` тем же same-origin запросом, что и остальные байты, и показывает кадр через object URL. PDF по-прежнему открывается в PDF.js.
 
@@ -61,7 +62,7 @@
 
 Та же подпись показывается после `GET`, если у сообщения ассистента `finish_reason` равен `retrieval_only`. Клиент не подставляет текст чанков в тело ответа: фрагменты остаются в карточках.
 
-Карточка источника: имя файла, «Page N», действие «Open». Если пользователь уже удалил файл, `GET /content` вернёт `404`; карточка остаётся, действие показывает «Preview unavailable».
+Карточка источника: имя файла, «Page N», действие «Open». Если у источника есть `unit_label`, вместо «Page N» показывается эта подпись. Если пользователь уже удалил файл, `GET /content` вернёт `404`; карточка остаётся, действие показывает «Preview unavailable».
 
 Пустой ответ модели по контракту может быть фразой «Не найдено в документах.» Клиент не отличает её от обычного текста и не подменяет её своей строкой. Пустой `sources` просто не рисует карточек.
 

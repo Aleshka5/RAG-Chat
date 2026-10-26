@@ -97,7 +97,11 @@ class MemoryRepository:
         wanted = set(file_ids)
         found: dict[str, FileRecord] = {}
         for record in self.files:
-            if record.file_id in wanted and record.user_id == user_id and record.status == "ready":
+            if (
+                record.file_id in wanted
+                and record.user_id == user_id
+                and (record.status == "ready" or (record.status == "processing" and record.reindex))
+            ):
                 found[record.file_id] = record
         return found
 

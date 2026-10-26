@@ -1621,6 +1621,7 @@ def test_rekey_returns_processing_card_and_publishes_the_new_key(stack) -> None:
     checkpoint = stored["checkpoint"]
     assert checkpoint["chunks_done"] == 0
     assert checkpoint["chunks_total"] is None
+    assert checkpoint["reindex"] is True
     assert checkpoint["embedding_model"] == "google/embeddinggemma-2"
     assert checkpoint["chunk_tokens"] == 512
     assert checkpoint["chunk_overlap"] == 51

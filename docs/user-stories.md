@@ -4,6 +4,8 @@
 
 Каталоги ниже не пересекаются. История не правит чужой каталог и норматив `docs/`, кроме этого файла у US-0. Ветка — `cursor/<имя>-cc69`.
 
+US-11…US-13 добавляют второй источник файлов: HomeCloud (WebStorage) кладёт свои PDF, DOCX, XLSX и изображения в те же коллекции `documents` и `images`. Контракт между системами — [integration-webstorage.md](integration-webstorage.md).
+
 | История | Ветка | Каталог |
 |---------|--------|---------|
 | US-0 | `cursor/scaffold-common-cc69` | `packages/rag-common/**`, `docker-compose.yml`, `.env.example`, `Makefile`, `AGENTS.md`, `docs/user-stories.md`, секция Run в `README.md` |
@@ -17,6 +19,9 @@
 | US-8 | `cursor/frontend-cc69` | `frontend/**` |
 | US-9 | `cursor/retrieval-only-2bef` | `services/chat/**`, `frontend/**`, нормативные абзацы этого сценария в `docs/` |
 | US-10 | `cursor/us10-image-search-ea6f` | `services/embedding/**`, `services/file-collector/**`, `services/processor/**`, `services/deletion-worker/**`, `services/chat/**`, `services/rag-edge/**`, `frontend/**`, `packages/rag-common/**`, нормативные абзацы этого сценария в `docs/` |
+| US-11 | `cursor/us11-office-documents-7c4a` | `services/processor/**`, `services/file-collector/**`, `services/chat/**`, `frontend/**`, `packages/rag-common/**`, нормативные абзацы этого сценария в `docs/` |
+| US-12 | `cursor/us12-shared-bucket-9e2b` | `services/file-collector/**`, `services/processor/**`, `services/deletion-worker/**`, `docker-compose.yml`, `.env.example`, нормативные абзацы этого сценария в `docs/` |
+| US-13 | `cursor/us13-rekey-3f81` | `services/file-collector/**`, `services/processor/**`, `services/chat/**`, нормативные абзацы этого сценария в `docs/` |
 
 Общий код — пакет `rag_common`. Сервисы не копируют конверт ошибки, проверку `X-Auth-User-Id`, топологию RabbitMQ, индексы MongoDB и формулу id точки.
 
@@ -172,3 +177,60 @@ Edge — единственный процесс в `rag_edge`. `GET /health` о
 > - [ ] `POST /api/chats/{chat_id}/messages` с `mode=images` не вызывает LLM. В `meta` есть `images` и `sources: []`. При попаданиях одна дельта `Найдено изображений: N.` и `finish_reason` `stop`. При пустом поиске дельта `Не найдено изображений.` и пустой `images`. `GET` чата возвращает сохранённый массив. `mode=documents` и отсутствие `mode` не меняют прежний ход. Неизвестный `mode` — `400`.
 > - [ ] В чате есть переключатель режима, по умолчанию документы. Режим изображений рисует превью по `content_path` тем же запросом байтов, что и файл, через object URL, вместе с именем и `score`. Карточка и предпросмотр изображения не идут в PDF.js. PDF открывается как раньше.
 > - [ ] `GET /api/chats/image-search` остаётся на префиксе `/api/chats`, `POST /api/files/documents` и `POST /api/files/images` — на префиксе `/api/files`. Edge отдаёт эти пути в Chat и File Collector.
+
+## US-11. Word и Excel в `documents`
+
+Ветка `cursor/us11-office-documents-7c4a`. Каталоги `services/processor/**`, `services/file-collector/**`, `services/chat/**`, `frontend/**`, `packages/rag-common/**`, нормативные абзацы этого сценария в `docs/`.
+
+Контракт интеграции — [integration-webstorage.md](integration-webstorage.md), раздел 6. Второй файл в тот же конвейер: docx и xlsx — это текст без страниц, поэтому вместо страницы вводится единица, на которую ссылается ответ.
+
+Приёмка:
+
+> - [ ] `POST /api/files/documents` с `content_type` `application/vnd.openxmlformats-officedocument.wordprocessingml.document` или `…spreadsheetml.sheet` ставит `doc.process` и отвечает `202` карточкой файла. `.doc`, `.xls`, `.pptx`, `.csv`, `text/plain` по-прежнему `415 unsupported_media_type`. Multipart `POST /api/files` остаётся только PDF.
+> - [ ] Processor разбирает docx без OCR: абзацы в порядке документа, затем таблицы построчно через ` | `. Единица — блок от заголовка `Heading 1…3` до следующего заголовка; документ без заголовков — одна единица. `unit_label` — текст заголовка, без него `Раздел N`.
+> - [ ] Processor разбирает xlsx без OCR: единица — лист с хотя бы одной непустой ячейкой, текст — значения ячеек построчно через табуляцию, формулы не пишутся. `unit_label` — имя листа.
+> - [ ] `page_count` в карточке равен числу единиц, `checkpoint.pages_total` тому же числу, `progress.pages_done` растёт без дыр. `file_pages` пишется по номеру единицы, схема не меняется. `page_count` не равен числу страниц печати, и это не ошибка.
+> - [ ] Payload Qdrant получает `unit_label` (keyword) только у docx и xlsx. Остальные поля прежние, `source` всегда `text`.
+> - [ ] `sources` в `meta`, в `GET /api/chats/{chat_id}` и в `openapi.yaml` получает необязательное `unit_label`. Есть значение — фронтенд показывает его вместо «стр. N»; нет — прежний вид для PDF.
+> - [ ] Файл, не открывающийся как OOXML, получает `error=corrupt_document`, сообщение уходит в DLQ. Файл без текста получает `no_extractable_text`. Повторная доставка при `ready` по-прежнему подтверждается без работы.
+> - [ ] Возобновление после падения работает как у PDF: `pages_done` не уменьшается, повтор не разбирает готовые единицы заново.
+> - [ ] Смена `CHUNK_TOKENS`, `CHUNK_OVERLAP_TOKENS` или `EMBEDDING_MODEL` сбрасывает только векторную часть: точки файла удаляются, единицы в `file_pages` остаются.
+
+## US-12. Один бакет с WebStorage и внешние объекты
+
+Ветка `cursor/us12-shared-bucket-9e2b`. Каталоги `services/file-collector/**`, `services/processor/**`, `services/deletion-worker/**`, корневой `docker-compose.yml`, `.env.example`, нормативные абзацы этого сценария в `docs/`.
+
+Контракт — [integration-webstorage.md](integration-webstorage.md), разделы 2–4 и 8. Бакет `documents` перестаёт существовать: storage и RAG читают один бакет `storage`, а байты, загруженные самим RAG, уезжают под префикс `rag/`.
+
+Приёмка:
+
+> - [ ] `S3_BUCKET` по умолчанию `storage`. Новые объекты RAG пишутся по ключу `rag/files/{user_id}/{file_id}/{safe_name}`. Старые `files/{user_id}/…` остаются читаемыми и удаляемыми, переноса объектов нет.
+> - [ ] Манифест `POST /api/files/documents` и `POST /api/files/images` принимает необязательное `origin`: `rag` или `storage`. Нет поля — `rag`. Иное значение — `400 validation_error` с полем `origin`.
+> - [ ] `origin=storage` требует ключ `users/{user_id}/…`; этот `user_id` обязан совпасть с `X-Auth-User-Id`, иначе `404 object_not_found`. Ключ `rag/files/{uuid}/…` или `files/{uuid}/…` с чужим UUID — тоже `404`.
+> - [ ] Документ `files` получает поле `object_owner` (`rag` \| `storage`). В API-карточку оно не попадает.
+> - [ ] Deletion Worker для `object_owner=storage` **не удаляет объект в бакете**: только точки `documents` и `images`, строки `file_pages` и запись `files`. Повторная регистрация того же `s3_key` после `deleted` проходит.
+> - [ ] Для `object_owner=rag` удаление объекта остаётся прежним. Отсутствие объекта — по-прежнему успех.
+> - [ ] `s3_url` в payload изображения равен `s3://storage/{s3_key}` и не содержит учётных данных.
+> - [ ] Processor читает объект по `s3_key` из манифеста: `users/…` и `rag/…` одинаково, если `user_id`, `s3_key` и `content_type` в сообщении совпадают с документом. Иначе `nack` без requeue.
+> - [ ] `GET /api/files/{file_id}/content` отдаёт байты объекта storage по сохранённому `content_type`. Файл из storage, зарегистрированный изображением, в режиме `images` и в `image-search` находится наравне с файлами RAG.
+> - [ ] `docker-compose.yml` не создаёт бакет `documents`; бакет `storage` создаётся storage-стеком и здесь не трогается. `_meta/`, `users/`, `shared/` RAG не пишет и не удаляет.
+> - [ ] Тест на совпадение имён: два пользователя с одинаковым `file_name` и одинаковыми байтами дают два разных `s3_key`, дедупликация по `(user_id, content_sha256)` работает внутри одного пользователя.
+
+## US-13. Re-key: переименование и перемещение
+
+Ветка `cursor/us13-rekey-3f81`. Каталоги `services/file-collector/**`, `services/processor/**`, `services/chat/**`, нормативные абзацы этого сценария в `docs/`. Поиск оставляет файл видимым, пока `checkpoint.reindex` истинен: иначе статус `processing` прятал бы старые точки.
+
+Контракт — [integration-webstorage.md](integration-webstorage.md), раздел 7. В storage переименование и перемещение меняют `s3_key`, содержимое остаётся тем же; повторная регистрация дала бы `409 duplicate_file`, а удаление с последующей регистрацией открывает окно, в котором файл не находится.
+
+Приёмка:
+
+> - [ ] `PUT /api/files/{file_id}/object` с `{s3_key, file_size, content_sha256}` отвечает `202` и карточкой файла; статус на время переиндексации — `processing`.
+> - [ ] `content_sha256` не совпал с сохранённым — `409 content_changed`, ничего не меняется. `file_size` не совпал с `HEAD` объекта — `400 validation_error`, поле `file_size`.
+> - [ ] Нет объекта по новому ключу — `404 object_not_found`. `origin=storage` требует префикс `users/{user_id}/…` своего пользователя.
+> - [ ] Чужой файл, `deleted` и `deleting` — `404`. Свежий `processing` — `409 file_busy`.
+> - [ ] `s3_key` заменяется, `checkpoint.chunks_done=0`, `chunks_total=null`, `page_count=null`. `file_pages` не удаляются.
+> - [ ] Публикуется `doc.process` с новым ключом. Точки не удаляются до переиндексации: идентификаторы чанков стабильны, upsert перезаписывает их на месте. Между вызовом и `ready` старые точки продолжают находиться поиском.
+> - [ ] `ready → processing` разрешён только этому маршруту. Остальные пути по-прежнему не возвращают `ready` в `processing`.
+> - [ ] Повторный `PUT` с теми же `s3_key` и хешем идемпотентен: `202`, повторная переиндексация тех же байтов, тот же набор идентификаторов точек.
+> - [ ] `ready` после переиндексации: `GET /api/files/{file_id}` отдаёт новый `s3_key` в `image-search` (`s3_key`, `s3_url`), для PDF — прежний `page_count`.
+> - [ ] Изменилось содержимое, а не имя — storage шлёт `DELETE`, ждёт `deleted` и регистрирует файл заново. Этот путь описан в [integration-webstorage.md](integration-webstorage.md) и в RAG нового не требует.

@@ -73,9 +73,9 @@
 | `message_type` | Строго `doc.process`. |
 | `message_id` | UUID, для логов. На идемпотентность не влияет. |
 | `file_id`, `user_id` | Обязательные UUID. |
-| `s3_key` | Непустая строка. У multipart это `files/{user_id}/{file_id}/{safe_name}`. У регистрации это ключ из запроса. Processor читает объект только по этому ключу и только если документ MongoDB с тем же `file_id` содержит тот же `s3_key` и тот же `user_id`. Иначе сообщение отклоняется в DLQ. |
+| `s3_key` | Непустая строка. У новой multipart-загрузки это `rag/files/{user_id}/{file_id}/{safe_name}`. У регистрации и re-key это ключ из запроса. Processor читает объект только по этому ключу и только если документ MongoDB с тем же `file_id` содержит тот же `s3_key`, тот же `user_id` и тот же `content_type`. Иначе сообщение отклоняется в DLQ. |
 | `file_name` | Отображаемое имя для payload Qdrant, если оно совпадает с документом. При расхождении побеждает `file_name` из MongoDB. |
-| `content_type` | `application/pdf` либо `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Другое значение — битое тело: `nack` без requeue, статус файла не менять. Word и `text/plain` сюда не публикуются. |
+| `content_type` | `application/pdf`, DOCX (`…wordprocessingml.document`), XLSX (`…spreadsheetml.sheet`) либо `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Другое значение — битое тело: `nack` без requeue, статус файла не менять. `.doc`, `.xls`, `.pptx`, `.csv` и `text/plain` сюда не публикуются. |
 | `created_at` | Время постановки сообщения. |
 
 `ack` — после согласованного завершения: либо файл `ready` и точки записаны, либо обработка сознательно пропущена (`ready`, `deleting`, `deleted`), либо статус уже записан как `error` и сообщение уходит в DLQ отдельным `nack`. Нельзя подтверждать сообщение, если статус остался `processing` из-за сбоя.

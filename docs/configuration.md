@@ -10,7 +10,7 @@
 | `S3_ENDPOINT` | file-collector, processor, deletion | нет | URL MinIO. |
 | `S3_ACCESS_KEY` | те же | нет | |
 | `S3_SECRET_KEY` | те же | нет | |
-| `S3_BUCKET` | те же | `documents` | |
+| `S3_BUCKET` | те же | `storage` | Общий бакет с WebStorage. RAG его не создаёт. |
 | `S3_REGION` | те же | `us-east-1` | Для MinIO значение формальное, но клиент его требует. |
 | `QDRANT_URL` | processor, deletion, chat | нет | Например `http://qdrant:6333`. |
 | `QDRANT_COLLECTION` | те же | `documents` | Коллекция чанков PDF. |

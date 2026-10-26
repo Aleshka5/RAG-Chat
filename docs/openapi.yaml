@@ -100,8 +100,9 @@ paths:
       summary: Зарегистрировать уже лежащий в бакете PDF
       description: |
         Манифест объекта в `S3_BUCKET`. Тело файла не передаётся, байты не копируются,
-        SHA-256 не пересчитывается. `content_type` обязан быть `application/pdf`.
-        Word, `text/plain` и любой другой тип — `415`, не `400`.
+        SHA-256 не пересчитывается. `content_type` — `application/pdf`, DOCX или XLSX.
+        `.doc`, `.xls`, `.pptx`, `.csv`, `text/plain` и любой другой тип — `415`, не `400`.
+        Необязательное `origin`: `rag` или `storage`, нет поля — `rag`.
         Успех публикует `doc.process` и возвращает карточку файла.
       requestBody:
         required: true
@@ -111,7 +112,7 @@ paths:
               $ref: "#/components/schemas/DocumentRegistration"
       responses:
         "202":
-          description: Документ поставлен в прежний PDF-конвейер.
+          description: Документ поставлен в конвейер documents. PDF, DOCX и XLSX.
           content:
             application/json:
               schema:
@@ -137,7 +138,7 @@ paths:
                   details:
                     file_id: 6f1c0c3e-3c8a-4f0e-9a4a-1d2b3c4d5e6f
         "415":
-          description: content_type не application/pdf. Word и text/plain входят в этот ответ.
+          description: content_type не PDF, DOCX или XLSX. .doc, .xls, .pptx, .csv и text/plain входят в этот ответ.
           content:
             application/json:
               schema:
@@ -145,7 +146,7 @@ paths:
               example:
                 error:
                   code: unsupported_media_type
-                  message: Only PDF is accepted
+                  message: Only PDF, DOCX, and XLSX are accepted
         "500":
           description: Метаданные записаны, публикация в очередь не удалась.
           content:
@@ -212,6 +213,55 @@ paths:
                 error:
                   code: unsupported_media_type
                   message: Only JPEG, PNG, WebP and GIF images are accepted
+        "500":
+          description: Метаданные записаны, публикация в очередь не удалась.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+  /api/files/{file_id}/object:
+    put:
+      tags: [Files]
+      summary: Сменить ключ объекта и переиндексировать те же байты
+      description: |
+        Тело — новый `s3_key`, `file_size` и `content_sha256`. Хеш обязан совпасть с сохранённым.
+        Успех ставит `processing`, пишет `checkpoint.reindex=true`, публикует `doc.process`
+        и не удаляет точки заранее. `object_owner` и `s3_key` в карточку не входят.
+      parameters:
+        - $ref: "#/components/parameters/FileId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RekeyObject"
+      responses:
+        "202":
+          description: Файл снова в processing. Старые точки остаются в поиске.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Нет файла, он чужой, deleted, deleting, нет объекта или ключ чужого владельца.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: content_changed, file_busy или duplicate_file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           description: Метаданные записаны, публикация в очередь не удалась.
           content:
@@ -289,6 +339,14 @@ paths:
               description: inline, с filename и filename*
           content:
             application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
               schema:
                 type: string
                 format: binary
@@ -652,8 +710,8 @@ components:
               message: File exceeds the size limit
     UnsupportedMedia:
       description: |
-        Multipart принимает только сигнатуру PDF.
-        Word и обычный текст дают этот же код.
+        Multipart POST /api/files принимает только сигнатуру PDF.
+        Манифест документа принимает PDF, DOCX и XLSX. Иной тип даёт этот же код.
       content:
         application/json:
           schema:
@@ -724,11 +782,13 @@ components:
           type: integer
           minimum: 0
           nullable: true
-          description: Число страниц PDF. У изображения и до открытия PDF равно null.
+          description: Число страниц PDF или единиц DOCX/XLSX. У изображения и до открытия равно null.
         content_type:
           type: string
           enum:
             - application/pdf
+            - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+            - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
             - image/jpeg
             - image/png
             - image/webp
@@ -739,6 +799,7 @@ components:
           nullable: true
           enum:
             - corrupt_pdf
+            - corrupt_document
             - storage_read_failed
             - embedding_failed
             - index_write_failed
@@ -858,6 +919,9 @@ components:
           maxLength: 500
         score:
           type: number
+        unit_label:
+          type: string
+          description: Подпись единицы DOCX или XLSX. У PDF поля нет.
     Message:
       type: object
       required: [message_id, role, content, created_at]
@@ -936,10 +1000,27 @@ components:
           minimum: 1
         content_type:
           type: string
+        origin:
+          type: string
+          enum: [rag, storage]
+          description: Нет поля — rag. Иное значение — 400 validation_error, поле origin.
     DocumentRegistration:
       allOf:
         - $ref: "#/components/schemas/RegisteredObject"
-      description: content_type равен application/pdf. Иной тип — ответ 415, не ошибка схемы.
+      description: content_type — application/pdf, DOCX или XLSX. Иной тип — ответ 415, не ошибка схемы.
+    RekeyObject:
+      type: object
+      required: [s3_key, file_size, content_sha256]
+      properties:
+        s3_key:
+          type: string
+          minLength: 1
+        file_size:
+          type: integer
+          minimum: 1
+        content_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
     ImageRegistration:
       allOf:
         - $ref: "#/components/schemas/RegisteredObject"

@@ -52,6 +52,9 @@ docs/
 | US-8 | `cursor/frontend-cc69` | `frontend` |
 | US-9 | `cursor/retrieval-only-2bef` | `services/chat`, `frontend`, нормативные абзацы сценария в `docs/` |
 | US-10 | `cursor/us10-image-search-ea6f` | `services/embedding`, `services/file-collector`, `services/processor`, `services/deletion-worker`, `services/chat`, `services/rag-edge`, `frontend`, `packages/rag-common`, нормативные абзацы сценария в `docs/` |
+| US-11 | `cursor/us11-office-documents-7c4a` | `services/processor`, `services/file-collector`, `services/chat`, `frontend`, `packages/rag-common`, нормативные абзацы сценария в `docs/` |
+| US-12 | `cursor/us12-shared-bucket-9e2b` | `services/file-collector`, `services/processor`, `services/deletion-worker`, `docker-compose.yml`, `.env.example`, нормативные абзацы сценария в `docs/` |
+| US-13 | `cursor/us13-rekey-3f81` | `services/file-collector`, `services/processor`, `services/chat`, нормативные абзацы сценария в `docs/` |
 
 ## Чем пользоваться
 

@@ -126,6 +126,7 @@ def rekey_update(s3_key: str, now: datetime) -> dict:
             "page_count": None,
             "checkpoint.chunks_done": 0,
             "checkpoint.chunks_total": None,
+            "checkpoint.reindex": True,
             "updated_at": now,
         }
     }

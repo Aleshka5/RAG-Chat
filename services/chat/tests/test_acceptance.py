@@ -719,6 +719,7 @@ LOW_IMAGE = "11111111-1111-4111-8111-111111111112"
 HIGH_IMAGE = "11111111-1111-4111-8111-111111111113"
 MID_IMAGE = "11111111-1111-4111-8111-111111111114"
 PENDING_IMAGE = "cccccccc-dddd-4eee-8fff-000000000001"
+REINDEX_IMAGE = "dddddddd-eeee-4fff-8aaa-000000000002"
 
 
 def _add_image(
@@ -852,6 +853,57 @@ async def test_image_search_drops_other_users_and_not_ready_files(api):
     assert nxt.json()["items"] == []
     assert nxt.json()["next_offset"] is None
     assert len(world.transport.embed_requests) == 1
+
+
+async def test_reindexing_file_stays_findable_until_ready(api):
+    client, world = api
+    world.add_file(
+        user_id=USER_A,
+        file_id=FILE_A,
+        file_name="Отчёт.pdf",
+        status="processing",
+        reindex=True,
+    )
+    world.add_point(
+        user_id=USER_A,
+        document_id=FILE_A,
+        text="срок годности",
+        page_number=1,
+        chunk_index=0,
+        score=0.8,
+    )
+    world.add_file(
+        user_id=USER_A,
+        file_id=REINDEX_IMAGE,
+        file_name="cat.jpg",
+        status="processing",
+        reindex=True,
+    )
+    world.add_file(
+        user_id=USER_A,
+        file_id=PENDING_IMAGE,
+        file_name="pending.jpg",
+        status="processing",
+    )
+    _add_image(world, REINDEX_IMAGE, "users/u/photos/cat.jpg", 0.7)
+    _add_image(world, PENDING_IMAGE, "pending.jpg", 0.99)
+
+    images = await client.get(
+        "/api/chats/image-search",
+        params={"q": "кот"},
+        headers=auth(USER_A),
+    )
+    assert images.status_code == 200
+    assert [item["file_id"] for item in images.json()["items"]] == [REINDEX_IMAGE]
+    assert images.json()["items"][0]["s3_key"] == "users/u/photos/cat.jpg"
+
+    created = await _create_chat(client)
+    response = await _ask(client, created["chat_id"], "Какой срок?")
+    assert response.status_code == 200
+    events = parse_sse(response.content)
+    meta = events[0][1]
+    assert [item["file_id"] for item in meta["sources"]] == [FILE_A]
+    assert meta["sources"][0]["page_number"] == 1
 
 
 async def test_image_search_validation(api):

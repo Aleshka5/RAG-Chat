@@ -76,7 +76,8 @@ def ready_update(page_count: int, now: datetime) -> dict[str, Any]:
             "error": None,
             "page_count": page_count,
             "updated_at": now,
-        }
+        },
+        "$unset": {"checkpoint.reindex": ""},
     }
 
 
@@ -87,7 +88,8 @@ def image_ready_update(now: datetime) -> dict[str, Any]:
             "status": "ready",
             "error": None,
             "updated_at": now,
-        }
+        },
+        "$unset": {"checkpoint.reindex": ""},
     }
 
 

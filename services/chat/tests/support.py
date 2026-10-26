@@ -80,9 +80,16 @@ class World:
         file_id: str,
         file_name: str,
         status: str = "ready",
+        reindex: bool = False,
     ) -> None:
         self.repo.files.append(
-            FileRecord(file_id=file_id, user_id=user_id, file_name=file_name, status=status)
+            FileRecord(
+                file_id=file_id,
+                user_id=user_id,
+                file_name=file_name,
+                status=status,
+                reindex=reindex,
+            )
         )
 
     def add_point(

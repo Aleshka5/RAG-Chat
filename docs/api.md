@@ -35,12 +35,13 @@
 | 401 | `unauthenticated` | Нет `X-Auth-User-Id` или это не UUID. |
 | 403 | `forbidden` | `X-Auth-Role` равен `BLOCKED`. |
 | 404 | `file_not_found` | Нет файла, он `deleted`, либо он чужой. |
-| 404 | `object_not_found` | Регистрация: объекта нет в бакете, либо ключ имеет вид `files/{uuid}/...` и этот UUID не равен вызывающему. |
+| 404 | `object_not_found` | Регистрация и re-key: объекта нет в бакете, либо ключ `files/{uuid}/...` или `rag/files/{uuid}/...` принадлежит другому пользователю, либо `origin=storage` требует `users/{user_id}/...` этого пользователя и ключ ему не соответствует. |
 | 404 | `chat_not_found` | Нет чата или он чужой. |
-| 409 | `duplicate_file` | Активный файл этого пользователя с тем же SHA-256. Для регистрации — также тот же `s3_key`. Активный статус — любой, кроме `deleted`. В `details.file_id` — существующий id. Второе сообщение в очередь не ставится. |
-| 409 | `file_busy` | Удаление во время свежего `processing` или повторное удаление при `deleting`. |
+| 409 | `duplicate_file` | Активный файл этого пользователя с тем же SHA-256. Для регистрации и re-key — также тот же `s3_key` у другого файла. Активный статус — любой, кроме `deleted`. В `details.file_id` — существующий id. Второе сообщение в очередь не ставится. |
+| 409 | `content_changed` | `PUT /api/files/{file_id}/object`: `content_sha256` не совпал с сохранённым. Ничего не меняется. |
+| 409 | `file_busy` | Удаление во время свежего `processing` или повторное удаление при `deleting`. Re-key на новый ключ во время свежего `processing` или `uploaded`. |
 | 413 | `file_too_large` | Размер больше `MAX_UPLOAD_BYTES`. По умолчанию 500 МиБ. |
-| 415 | `unsupported_media_type` | Multipart `POST /api/files` и `POST /api/files/documents`: не PDF. Word и `text/plain` сюда же. Multipart `POST /api/files/images` и `POST /api/files/images` с манифестом: не JPEG, PNG, WebP или GIF. |
+| 415 | `unsupported_media_type` | Multipart `POST /api/files`: не PDF. `POST /api/files/documents`: не PDF, DOCX или XLSX (`.doc`, `.xls`, `.pptx`, `.csv`, `text/plain` сюда же). Multipart `POST /api/files/images` и JSON-манифест изображений: не JPEG, PNG, WebP или GIF. |
 | 500 | `enqueue_failed` | Метаданные записаны, публикация в очередь не удалась. |
 | 502 | `upstream_failed` | Embedding ответил ошибкой после повтора, либо LLM вернул HTTP 4xx кроме 429. Для потока — событие `error`, если текстовый токен уже ушёл клиенту. Недоступность LLM до первого токена при непустых источниках — не этот код. |
 | 503 | `dependency_unavailable` | MongoDB, Qdrant, MinIO или Embedding недоступны до начала ответа. |
@@ -62,7 +63,7 @@
 4. Содержимое начинается с `%PDF`. Иначе `415`, даже если браузер прислал `application/pdf`.
 5. Считается SHA-256.
 6. Если активный файл пользователя с тем же хешем уже есть — `409`.
-7. Объект записывается в MinIO.
+7. Объект записывается в MinIO по ключу `rag/files/{user_id}/{file_id}/{safe_name}`. Старые ключи `files/{user_id}/...` не переносятся.
 8. Вставляется документ `uploaded`. Конфликт уникального индекса — объект удаляется, клиенту `409`.
 9. Публикуется `doc.process` с publisher confirm.
 10. Неудачная публикация: статус `error`, `error=enqueue_failed`, клиенту `500`. Файл виден в списке и его можно удалить.
@@ -98,11 +99,11 @@
 3. Имя файла проходит очистку. Расширение не подменяется: объект получает имя из запроса.
 4. Тип определяется сигнатурой байтов: `\x89PNG` — `image/png`, `\xff\xd8\xff` — `image/jpeg`, `GIF87a` и `GIF89a` — `image/gif`, `RIFF` с `WEBP` на смещении 8 — `image/webp`. Иная сигнатура — `415` `unsupported_media_type`. Поле `content_type` из multipart не учитывается.
 5. Считается SHA-256 по записанным байтам. Активный файл пользователя с тем же хешем — `409`.
-6. Объект пишется в `files/{user_id}/{file_id}/{safe_name}`, документ вставляется со статусом `uploaded` и принятым `content_type`.
+6. Объект пишется в `rag/files/{user_id}/{file_id}/{safe_name}`, документ вставляется со статусом `uploaded`, `object_owner=rag` и принятым `content_type`. `object_owner` в карточку не входит.
 7. Публикуется `doc.process` с этим `content_type`. Неудача — `500` `enqueue_failed`, как у PDF.
 8. Успех — `202` и та же карточка, что у загрузки. `page_count` — `null`.
 
-У каждого конвейера свой маршрут с байтами: PDF — `POST /api/files`, изображение — этот. Изображение на маршруте PDF — `415`, PDF на маршруте изображений — тоже `415`. Word и `text/plain` не принимает ни один.
+У каждого конвейера свой маршрут с байтами: PDF — `POST /api/files`, изображение — этот. Изображение на маршруте PDF — `415`, PDF на маршруте изображений — тоже `415`. DOCX, XLSX и `text/plain` multipart не принимает.
 
 ### `POST /api/files/documents` и `POST /api/files/images` (JSON-манифест)
 
@@ -124,20 +125,21 @@
 | `file_name` | Непустое базовое имя, до 255 символов. Путь в имени отсекается. Расширение на `.pdf` не подменяется. |
 | `content_sha256` | Ровно 64 шестнадцатеричных символа в нижнем регистре. Иные буквы и длина — `400`. Байты объекта заново не хешируются: после проверки формата строка записывается как есть. |
 | `file_size` | Целое больше 0. |
-| `content_type` | Для `POST /api/files/documents` только `application/pdf`. Для `POST /api/files/images` только `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Word, `text/plain` и любой другой тип на обоих маршрутах — `415` `unsupported_media_type`. PDF на маршруте изображений — тоже `415`. |
+| `content_type` | Для `POST /api/files/documents`: `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Для `POST /api/files/images`: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Иной тип — `415` `unsupported_media_type`. |
+| `origin` | Необязательное. `rag` или `storage`. Нет поля — `rag`. Иное значение — `400` `validation_error`, поле `origin`. В документ пишется как `object_owner` и в карточку не попадает. |
 
 Корень тела — JSON-объект. Иначе `400` `validation_error`, `details.fields` содержит `body`.
 
 Дальше:
 
-1. Если ключ имеет вид `files/{uuid}/...` и этот UUID в каноническом нижнем регистре не равен `user_id` вызывающего, ответ `404` `object_not_found`. Чужой объект не читается.
+1. `origin=storage` требует ключ `users/{user_id}/...` этого пользователя, иначе `404` `object_not_found`. `origin=rag` отвергает `users/`, `_meta/` и `shared/`. Ключ `files/{uuid}/...` или `rag/files/{uuid}/...` с чужим UUID — `404` `object_not_found`. Свой `files/` и `rag/files/`, а также прочие ключи вне чужих префиксов, остаются допустимыми.
 2. `HEAD` объекта в бакете `S3_BUCKET`. Нет объекта — `404` `object_not_found`. Если `HEAD` вернул размер и он не равен `file_size` — `400` `validation_error`, поле `file_size`. Сбой хранилища — `503` `dependency_unavailable`. Копии объекта нет.
 3. Активный файл того же пользователя с тем же `content_sha256` или тем же `s3_key` — `409` `duplicate_file`. Если совпали разные файлы, в `details.file_id` попадает файл с тем же `s3_key`, иначе файл с тем же хешем.
 4. Вставляется документ `uploaded`. `s3_key` — ключ из запроса. `page_count` у изображения — `null` и таким остаётся. Конфликт уникального индекса — `409`.
 5. Публикуется `doc.process` с этим `content_type` и этим `s3_key`. Подтверждение и ошибка публикации те же, что у загрузки: неудача даёт `error=enqueue_failed` и `500`.
 6. Успех — `202` и та же карточка, что у загрузки. У изображения `content_type` — принятый тип, `page_count` — `null`.
 
-Документ с `application/pdf` обрабатывается прежним конвейером в коллекцию `documents`. Изображение эмбеддится в коллекцию `images`. Регистрация документа сигнатуру `%PDF` не проверяет: тип решает поле `content_type`. Сигнатуру проверяют оба multipart-маршрута: `POST /api/files` для PDF и `POST /api/files/images` для изображения.
+PDF, DOCX и XLSX идут в коллекцию `documents`. Изображение эмбеддится в коллекцию `images`. Регистрация документа сигнатуру `%PDF` не проверяет: тип решает поле `content_type`. Сигнатуру проверяют оба multipart-маршрута: `POST /api/files` для PDF и `POST /api/files/images` для изображения.
 
 ### `GET /api/files`
 
@@ -160,6 +162,26 @@ Query: `limit` от 1 до 100, по умолчанию 50; `offset` от 0, п�
 
 Карточка одного файла. `deleted` и чужой id — `404`.
 
+### `PUT /api/files/{file_id}/object`
+
+Переименование или перемещение: содержимое то же, меняется `s3_key`.
+
+```json
+{ "s3_key": "users/…/files/Новая папка/Отчёт.docx", "file_size": 12345, "content_sha256": "0123…" }
+```
+
+1. Файл этого пользователя. Нет файла, чужой, `deleted` или `deleting` — `404` `file_not_found`.
+2. `content_sha256` не совпал с сохранённым — `409` `content_changed`. Запись, `HEAD` и публикация не выполняются.
+3. Тот же `s3_key` и тот же хеш — идемпотентный повтор: `202`, статус `processing`, повторная публикация `doc.process`, даже если обработка ещё свежая.
+4. Новый ключ при свежем `processing` или `uploaded` — `409` `file_busy`. Новый ключ принимается из `ready`, `error` и устаревшего `processing`.
+5. Для `object_owner=storage` новый ключ обязан быть `users/{user_id}/...` этого пользователя. Для `rag` ключи `users/`, `_meta/` и `shared/` — `404` `object_not_found`. Чужой `files/{uuid}/` и `rag/files/{uuid}/` — тоже `404`.
+6. `HEAD` нового ключа. Нет объекта — `404` `object_not_found`. Размер не совпал с `file_size` — `400`, поле `file_size`.
+7. Другой активный файл этого пользователя с тем же `s3_key` — `409` `duplicate_file`.
+8. Записываются новый `s3_key`, `status=processing`, `page_count=null`, `checkpoint.chunks_done=0`, `checkpoint.chunks_total=null`, `checkpoint.reindex=true`. `file_pages`, хеш, размер, тип, `object_owner` и поля модели нарезки не меняются. Точки Qdrant не удаляются. Старый объект в бакете не удаляется.
+9. Публикуется `doc.process` с новым ключом. Успех — `202` и карточка со статусом `processing`.
+
+`ready → processing` разрешён только этому маршруту. Пока `checkpoint.reindex` истинен, поиск документов и изображений продолжает находить старые точки. Processor снимает флаг, когда ставит `ready`.
+
 ### `DELETE /api/files/{file_id}`
 
 1. Найти файл этого пользователя. Нет или `deleted` — `404`.
@@ -179,7 +201,7 @@ Query: `limit` от 1 до 100, по умолчанию 50; `offset` от 0, п�
 
 ### `GET /api/files/{file_id}/content`
 
-Поток байтов для статусов `uploaded`, `processing`, `ready`, `error`. `deleting` и `deleted` — `404`: объект может уже исчезнуть. `Content-Type` ответа — сохранённый `content_type`: `application/pdf` либо один из `image/jpeg`, `image/png`, `image/webp`, `image/gif`.
+Поток байтов для статусов `uploaded`, `processing`, `ready`, `error`. `deleting` и `deleted` — `404`: объект может уже исчезнуть. `Content-Type` ответа — сохранённый `content_type`: PDF, DOCX, XLSX либо один из `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Для `object_owner=storage` байты читаются по `s3_key` и при удалении записи из бакета не стираются.
 
 Заголовки:
 
@@ -254,7 +276,7 @@ Query: `limit` 1–200, по умолчанию 50; `offset` от 0.
 }
 ```
 
-У сообщения `user` полей `sources` и `images` нет. У ответа режима `images` есть `images` — тот же массив, что ушёл в `meta`, включая пустой. Поля `s3_key` и `s3_url` в нём нет. У ответа режима `documents` поля `images` нет.
+У сообщения `user` полей `sources` и `images` нет. У ответа режима `images` есть `images` — тот же массив, что ушёл в `meta`, включая пустой. Поля `s3_key` и `s3_url` в нём нет. У ответа режима `documents` поля `images` нет. У источника DOCX или XLSX в `sources` есть необязательное `unit_label`. У PDF этого поля нет.
 
 ### `DELETE /api/chats/{chat_id}`
 
@@ -274,7 +296,7 @@ Query:
 
 Вектор считается тем же `POST /embed` с `input_type=query` и тем же префиксом `task: question answering | query: `. Хвост вопроса обрезается так же, как в ходе чата, если вместе с префиксом он длиннее `EMBEDDING_MAX_TOKENS`. В поиске участвует эта усечённая строка. Сбой эмбеддинга до ответа — `502`, `503` или `504`, как у вопроса.
 
-Поиск идёт по коллекции `QDRANT_IMAGES_COLLECTION` с фильтром `user_id`. Точки, чей файл в MongoDB не принадлежит этому пользователю или не в статусе `ready`, отбрасываются. `offset` и `limit` применяются уже к этому списку. Порядок — по `score` по убыванию. Коллекции ещё нет или Qdrant недоступен — `503`.
+Поиск идёт по коллекции `QDRANT_IMAGES_COLLECTION` с фильтром `user_id`. Точки, чей файл в MongoDB не принадлежит этому пользователю, отбрасываются. Остаются `ready` и `processing` с `checkpoint.reindex=true`. `offset` и `limit` применяются уже к этому списку. Порядок — по `score` по убыванию. Коллекции ещё нет или Qdrant недоступен — `503`.
 
 ```json
 {
@@ -350,7 +372,7 @@ data: {"code":"upstream_timeout","message":"LLM timed out"}
 2. Текст валиден. Иначе `400`.
 3. Вектор вопроса запрашивается у Embedding одним текстом с `input_type=query`. Сервис сам добавляет префикс `task: question answering | query: `. Если вместе с ним вопрос длиннее `EMBEDDING_MAX_TOKENS`, Chat отрезает хвост вопроса, пока пара не влезет; в LLM уходит исходный текст. Сбой эмбеддинга — `503` или `502`, в базе ничего нет.
 4. Поиск в коллекции `documents` с фильтром `user_id` и лимитом `RAG_TOP_K`. Коллекция `images` в этом режиме не читается.
-5. Собрать множество `document_id` и оставить только файлы этого пользователя со статусом `ready`. Остальные источники выбросить.
+5. Собрать множество `document_id` и оставить файлы этого пользователя со статусом `ready`, а также `processing` с `checkpoint.reindex=true`. Остальные источники выбросить. Первая индексация по-прежнему не видна, пока файл не `ready`.
 6. Применить `RAG_MIN_SCORE`, если он больше 0.
 7. Взять последние `RAG_CONTEXT_MESSAGES` сообщений чата в хронологическом порядке. В промпт из них идут только `role` и `content`.
 8. Если источников не осталось, не вызывать LLM. Единственный `delta` содержит ровно `Не найдено в документах.` Поле `sources` в `meta` — пустой массив. `finish_reason` в `done` — `stop`.
@@ -362,7 +384,7 @@ data: {"code":"upstream_timeout","message":"LLM timed out"}
 
 #### Режим `images`
 
-LLM не вызывается. Поиск — тот же, что у `GET /api/chats/image-search`: вектор `input_type=query`, коллекция `images`, только `ready` файлы пользователя, `RAG_MIN_SCORE`, но `limit` равен `RAG_TOP_K` и `offset` равен 0. Кэш вектора общий с поисковым маршрутом.
+LLM не вызывается. Поиск — тот же, что у `GET /api/chats/image-search`: вектор `input_type=query`, коллекция `images`, те же статусы, что у поиска документов, `RAG_MIN_SCORE`, но `limit` равен `RAG_TOP_K` и `offset` равен 0. Кэш вектора общий с поисковым маршрутом.
 
 `meta` содержит `sources: []` и `images`. Элемент `images` — `file_id`, `file_name`, `score`, `content_path`. Полей `s3_key` и `s3_url` в этом объекте нет.
 

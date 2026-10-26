@@ -167,6 +167,7 @@ def test_rekey_filter_excludes_deleting_and_resets_only_chunk_progress() -> None
     assert update["$set"]["page_count"] is None
     assert update["$set"]["checkpoint.chunks_done"] == 0
     assert update["$set"]["checkpoint.chunks_total"] is None
+    assert update["$set"]["checkpoint.reindex"] is True
     assert "checkpoint.embedding_model" not in update["$set"]
     assert "checkpoint.chunk_tokens" not in update["$set"]
     assert "checkpoint.chunk_overlap" not in update["$set"]
